@@ -1,0 +1,245 @@
+{% extends 'base.html' %}
+{% block title %}Register Tablets — EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1><i class="fas fa-tablet-alt"></i> Register Tablets</h1>
+  <a href="{{ url_for('tablet_list') }}" class="btn btn-outline">
+    <i class="fas fa-arrow-left"></i> Back to Inventory
+  </a>
+</div>
+
+<!-- Current inventory summary -->
+<div class="inventory-summary">
+  <i class="fas fa-database"></i>
+  Currently <strong>{{ tablet_count }}</strong> tablet{{ 's' if tablet_count != 1 else '' }} in inventory.
+  {% if tablet_count == 0 %}
+    Add your first batch below.
+  {% endif %}
+</div>
+
+<div class="form-card">
+  <div class="form-card-header">
+    <i class="fas fa-info-circle"></i>
+    Enter the number of tablets you want to register. The system will automatically
+    assign IDs starting from <strong>TAB-01</strong>, filling any gaps left by deleted tablets first.
+  </div>
+
+  <form method="POST" action="{{ url_for('add_tablet') }}" id="tablet-form">
+
+    <div class="form-section-label">Tablet Identification</div>
+
+    <div class="form-row three-col">
+      <div class="form-group">
+        <label>ID Prefix <span class="required-star">*</span></label>
+        <div class="input-with-icon">
+          <i class="fas fa-tag"></i>
+          <input type="text" name="prefix" id="prefix-input" class="form-control"
+                 placeholder="e.g. TAB" value="TAB" maxlength="10" required
+                 style="text-transform:uppercase;"/>
+        </div>
+        <span class="form-note">Letters before the number (e.g. TAB → TAB-01)</span>
+      </div>
+
+      <div class="form-group">
+        <label>Device / Model Name</label>
+        <div class="input-with-icon">
+          <i class="fas fa-mobile-alt"></i>
+          <input type="text" name="device_name" id="device-input" class="form-control"
+                 placeholder="e.g. Samsung Tab, iPad Mini"/>
+        </div>
+        <span class="form-note">Used in the tablet name (optional)</span>
+      </div>
+
+      <div class="form-group">
+        <label>Number of Tablets <span class="required-star">*</span></label>
+        <div class="input-with-icon">
+          <i class="fas fa-hashtag"></i>
+          <input type="number" name="quantity" id="qty-input" class="form-control"
+                 value="1" min="1" max="100" required/>
+        </div>
+        <span class="form-note">How many tablets to register (max 100)</span>
+      </div>
+    </div>
+
+    <!-- Live preview -->
+    <div class="preview-box" id="preview-box">
+      <div class="preview-title"><i class="fas fa-eye"></i> Preview</div>
+      <div id="preview-content" class="preview-ids"></div>
+    </div>
+
+    <div class="form-divider"></div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary btn-lg">
+        <i class="fas fa-plus-circle"></i> Register Tablets
+      </button>
+      <a href="{{ url_for('tablet_list') }}" class="btn btn-outline btn-lg">Cancel</a>
+    </div>
+
+  </form>
+</div>
+
+<style>
+.inventory-summary {
+  background: var(--navy-ghost);
+  border: 1px solid var(--ink-rule);
+  border-radius: var(--radius-sm);
+  padding: .8rem 1.2rem;
+  font-size: .9rem;
+  color: var(--ink-mid);
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+}
+.inventory-summary i { color: var(--navy); }
+.inventory-summary strong { color: var(--navy); font-size: 1rem; }
+
+.form-section-label {
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--ink-ghost);
+  margin: 1.5rem 0 .9rem;
+  padding-bottom: .4rem;
+  border-bottom: 1px solid var(--ink-rule);
+}
+.form-section-label:first-of-type { margin-top: 0; }
+
+.three-col {
+  grid-template-columns: 1fr 1.4fr 1fr;
+}
+
+.required-star { color: var(--danger); font-size: .8rem; margin-left: 2px; }
+
+.input-with-icon { position: relative; }
+.input-with-icon i {
+  position: absolute;
+  left: .9rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ink-ghost);
+  font-size: .85rem;
+  pointer-events: none;
+}
+.input-with-icon .form-control { padding-left: 2.4rem; }
+
+/* Preview box */
+.preview-box {
+  background: var(--surface-alt);
+  border: 1.5px dashed var(--ink-rule);
+  border-radius: var(--radius);
+  padding: 1.2rem 1.4rem;
+  margin-top: 1.5rem;
+  transition: border-color .2s;
+}
+.preview-box:has(.preview-ids:not(:empty)) { border-color: var(--navy); }
+
+.preview-title {
+  font-size: .78rem;
+  font-weight: 700;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: var(--ink-light);
+  margin-bottom: .75rem;
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+}
+
+.preview-ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+}
+
+.preview-tag {
+  background: var(--navy);
+  color: var(--white);
+  padding: .25rem .7rem;
+  border-radius: var(--radius-xs);
+  font-size: .8rem;
+  font-weight: 700;
+  letter-spacing: .3px;
+  animation: tagPop .15s ease both;
+}
+
+.preview-more {
+  background: var(--ink-rule);
+  color: var(--ink-light);
+  padding: .25rem .7rem;
+  border-radius: var(--radius-xs);
+  font-size: .8rem;
+  font-weight: 600;
+  font-style: italic;
+}
+
+@keyframes tagPop {
+  from { opacity: 0; transform: scale(.8); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.form-divider {
+  height: 1px;
+  background: var(--ink-rule);
+  margin: 1.5rem 0;
+}
+</style>
+
+<div id="tablet-data"
+     data-used='{{ used_nums_by_prefix | tojson }}'
+     style="display:none"></div>
+
+<script>
+// Live preview — mirrors the backend gap-filling logic exactly
+const prefixInput   = document.getElementById('prefix-input');
+const deviceInput   = document.getElementById('device-input');
+const qtyInput      = document.getElementById('qty-input');
+const previewBox    = document.getElementById('preview-content');
+// Read used numbers from data attribute to avoid JS linter warnings on Jinja syntax
+const USED_BY_PREFIX = JSON.parse(document.getElementById('tablet-data').dataset.used || '{}');
+const MAX_PREVIEW   = 12;
+
+function updatePreview() {
+  const prefix  = (prefixInput.value || 'TAB').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const qty     = Math.max(1, Math.min(100, parseInt(qtyInput.value) || 1));
+  const usedSet = new Set(USED_BY_PREFIX[prefix] || []);
+
+  previewBox.innerHTML = '';
+
+  // Find the first `qty` available numbers from 1 upward
+  const ids = [];
+  let counter = 1;
+  while (ids.length < qty && counter <= 9999) {
+    if (!usedSet.has(counter)) {
+      ids.push(`${prefix}-${String(counter).padStart(2, '0')}`);
+    }
+    counter++;
+  }
+
+  const showCount = Math.min(ids.length, MAX_PREVIEW);
+  ids.slice(0, showCount).forEach(function(id, i) {
+    const tag = document.createElement('span');
+    tag.className = 'preview-tag';
+    tag.textContent = id;
+    tag.style.animationDelay = `${i * 25}ms`;
+    previewBox.appendChild(tag);
+  });
+
+  if (qty > MAX_PREVIEW) {
+    const more = document.createElement('span');
+    more.className = 'preview-more';
+    more.textContent = `+ ${qty - MAX_PREVIEW} more…`;
+    previewBox.appendChild(more);
+  }
+}
+
+prefixInput.addEventListener('input', updatePreview);
+deviceInput.addEventListener('input', updatePreview);
+qtyInput.addEventListener('input', updatePreview);
+updatePreview();
+</script>
+
+{% endblock %}

@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}EIA System{% endblock %}</title>
+
+  <!-- Prevent browser caching admin pages so navbar updates instantly on logout -->
+  {% if session.get('logged_in') %}
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  {% endif %}
+
+  {% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+  {% endblock %}
+</head>
+<body>
+
+<!-- TOP NAVBAR -->
+<nav class="navbar">
+  <div class="navbar-brand">
+    <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Empower International Academy" class="navbar-logo"/>
+    <span><em>EIA</em> Management System</span>
+  </div>
+  <div class="navbar-links">
+    {% if session.get('logged_in') %}
+      <a href="{{ url_for('dashboard') }}"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <a href="{{ url_for('staff_list') }}"><i class="fas fa-users"></i> Staff</a>
+
+      <!-- Attendance dropdown -->
+      <div class="nav-dropdown">
+        <a href="{{ url_for('attendance_history') }}" class="nav-dropdown-toggle">
+          <i class="fas fa-calendar-check"></i> Attendance <i class="fas fa-chevron-down nav-caret"></i>
+        </a>
+        <div class="nav-dropdown-menu">
+          <a href="{{ url_for('attendance_history') }}">
+            <i class="fas fa-calendar-day"></i> Daily View
+          </a>
+          <a href="{{ url_for('attendance_monthly') }}">
+            <i class="fas fa-calendar-alt"></i> 12-Month Archive
+          </a>
+          <div class="dropdown-divider"></div>
+          <a href="{{ url_for('attendance_pdf', date=today_date if today_date is defined else '') }}" target="_blank">
+            <i class="fas fa-file-pdf"></i> Print Today's Report
+          </a>
+        </div>
+      </div>
+
+      <!-- Tablets dropdown -->
+      <div class="nav-dropdown">
+        <a href="{{ url_for('tablet_list') }}" class="nav-dropdown-toggle">
+          <i class="fas fa-tablet-alt"></i> Tablets <i class="fas fa-chevron-down nav-caret"></i>
+        </a>
+        <div class="nav-dropdown-menu">
+          <a href="{{ url_for('tablet_list') }}">
+            <i class="fas fa-list-ul"></i> Inventory
+          </a>
+          <a href="{{ url_for('tablet_transactions') }}">
+            <i class="fas fa-exchange-alt"></i> Transactions
+          </a>
+          <div class="dropdown-divider"></div>
+          <a href="{{ url_for('add_tablet') }}">
+            <i class="fas fa-plus-circle"></i> Register Tablets
+          </a>
+        </div>
+      </div>
+
+      <a href="{{ url_for('gate') }}">Gate</a>
+      <a href="{{ url_for('tablet_signout') }}"><i class="fas fa-sign-out-alt"></i> Borrow Tablet</a>
+      <a href="{{ url_for('logout') }}" class="btn-logout"><i class="fas fa-sign-in-alt"></i> Logout</a>
+    {% else %}
+      <a href="{{ url_for('gate') }}"> Gate Attendance</a>
+      <a href="{{ url_for('tablet_signout') }}"> Borrow Tablet</a>
+      <a href="{{ url_for('login') }}"><i class="fas fa-lock"></i> Admin Login</a>
+    {% endif %}
+  </div>
+</nav>
+
+<!-- OVERDUE NOTIFICATION BANNER (only when logged in) -->
+{% if session.get('logged_in') %}
+<div id="overdue-banner" class="overdue-banner hidden"></div>
+{% endif %}
+
+<!-- FLASH MESSAGES -->
+<div class="flash-container">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category }}">
+        <i class="fas fa-info-circle"></i> {{ message }}
+        <button class="close-alert" onclick="this.parentElement.remove()">×</button>
+      </div>
+    {% endfor %}
+  {% endwith %}
+</div>
+
+<!-- PAGE CONTENT -->
+<main class="main-content">
+  {% block content %}{% endblock %}
+</main>
+
+<!-- FOOTER -->
+<footer class="footer">
+  Empower International Academy
+  <p>&copy; 2026 Empower International Academy — Staff Attendance &amp; Gadget Tracking System</p>
+</footer>
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+<!-- Dropdown nav behaviour -->
+<script>
+(function () {
+  const dropdowns = document.querySelectorAll('.nav-dropdown');
+
+  dropdowns.forEach(function (dd) {
+    const toggle = dd.querySelector('.nav-dropdown-toggle');
+    const menu   = dd.querySelector('.nav-dropdown-menu');
+
+    // Toggle on click (works for both touch and mouse)
+    toggle.addEventListener('click', function (e) {
+      // If the click is directly on the parent link text (not the caret),
+      // allow navigation but also toggle the menu on mobile.
+      const isOpen = dd.classList.contains('open');
+      closeAll();
+      if (!isOpen) {
+        dd.classList.add('open');
+        e.preventDefault(); // prevent navigation when opening menu
+      }
+    });
+  });
+
+  // Close all dropdowns when clicking outside
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('.nav-dropdown')) closeAll();
+  });
+
+  function closeAll() {
+    dropdowns.forEach(function (d) { d.classList.remove('open'); });
+  }
+})();
+</script>
+
+<style>
+/* ── Dropdown nav ── */
+.nav-dropdown {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.nav-dropdown-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.nav-caret {
+  font-size: .6rem !important;
+  opacity: .65;
+  transition: transform .2s ease;
+}
+
+.nav-dropdown.open .nav-caret {
+  transform: rotate(180deg);
+}
+
+.nav-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 200px;
+  background: var(--white, #fff);
+  border: 1px solid var(--ink-rule, #e5e7eb);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.12);
+  z-index: 999;
+  overflow: hidden;
+  animation: ddFadeIn .18s ease both;
+}
+
+.nav-dropdown.open .nav-dropdown-menu {
+  display: block;
+}
+
+@keyframes ddFadeIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Arrow pointer */
+.nav-dropdown-menu::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 6px solid var(--ink-rule, #e5e7eb);
+}
+.nav-dropdown-menu::after {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 6px solid var(--white, #fff);
+}
+
+.nav-dropdown-menu a {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  padding: .65rem 1.1rem;
+  font-size: .85rem;
+  font-weight: 500;
+  color: var(--ink-mid, #374151) !important;
+  text-decoration: none;
+  transition: background .12s;
+  white-space: nowrap;
+}
+
+.nav-dropdown-menu a:hover {
+  background: var(--navy-ghost, #f0f4ff);
+  color: var(--navy, #1a2a6c) !important;
+}
+
+.nav-dropdown-menu a i {
+  width: 16px;
+  text-align: center;
+  color: var(--ink-ghost, #9ca3af);
+  font-size: .8rem;
+}
+
+.nav-dropdown-menu a:hover i {
+  color: var(--navy, #1a2a6c);
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: var(--ink-rule, #e5e7eb);
+  margin: .3rem 0;
+}
+</style>
+
+</body>
+</html>

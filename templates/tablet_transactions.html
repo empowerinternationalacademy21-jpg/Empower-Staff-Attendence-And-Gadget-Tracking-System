@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% block title %}Tablet Transactions - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1><i class="fas fa-list"></i> Tablet Transactions</h1>
+  <a href="{{ url_for('tablet_signout') }}" class="btn btn-primary"><i class="fas fa-plus"></i> New Sign-Out</a>
+</div>
+
+<!-- ACTIVE BORROWS -->
+<section class="section">
+  <h2 class="section-title"><i class="fas fa-hand-holding"></i> Currently Borrowed ({{ active|length }})</h2>
+  {% if active %}
+  <div class="card">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Tablet</th><th>Student</th><th>Class</th><th>Qty</th>
+          <th>Signed Out</th><th>Expected Return</th><th>Accessories</th><th>Status</th><th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tx in active %}
+        {% set overdue = tx['expected_return_time'] and now > tx['expected_return_time'] %}
+        <tr class="{{ 'row-overdue' if overdue else '' }}">
+          <td><span class="badge badge-blue">{{ tx['tab_code'] }}</span></td>
+          <td>{{ tx['student_name'] }}</td>
+          <td>{{ tx['student_class'] }}</td>
+          <td>{{ tx['quantity'] }}</td>
+          <td>{{ tx['sign_out_time']|fmt_dt }}</td>
+          <td>
+            {{ tx['expected_return_time']|fmt_dt_time }}
+            {% if overdue %}<span class="badge badge-red">OVERDUE</span>{% endif %}
+          </td>
+          <td>
+            {% if tx['took_charger'] %}<i class="fas fa-plug" title="Charger"></i> {% endif %}
+            {% if tx['took_earphones'] %}<i class="fas fa-headphones" title="Earphones"></i>{% endif %}
+            {% if not tx['took_charger'] and not tx['took_earphones'] %}—{% endif %}
+          </td>
+          <td><span class="badge badge-yellow">Borrowed</span></td>
+          <td>
+            <form method="POST" action="{{ url_for('tablet_return', tx_id=tx['id']) }}" onsubmit="return confirm('Mark as returned?')">
+              <button class="btn btn-sm btn-primary"><i class="fas fa-undo"></i> Return</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state small">
+    <i class="fas fa-check-circle" style="color:var(--green)"></i>
+    <p>No tablets currently borrowed.</p>
+  </div>
+  {% endif %}
+</section>
+
+<!-- HISTORY -->
+<section class="section">
+  <h2 class="section-title"><i class="fas fa-history"></i> Return History (last 50)</h2>
+  {% if history %}
+  <div class="card">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Tablet</th><th>Student</th><th>Class</th>
+          <th>Signed Out</th><th>Returned</th><th>Duration</th><th>Accessories</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tx in history %}
+        <tr>
+          <td><span class="badge badge-blue">{{ tx['tab_code'] }}</span></td>
+          <td>{{ tx['student_name'] }}</td>
+          <td>{{ tx['student_class'] }}</td>
+          <td>{{ tx['sign_out_time']|fmt_dt }}</td>
+          <td>{{ tx['sign_back_time']|fmt_dt }}</td>
+          <td>{{ tx['duration_hours'] }}h</td>
+          <td>
+            {% if tx['took_charger'] %}<i class="fas fa-plug" title="Charger"></i> {% endif %}
+            {% if tx['took_earphones'] %}<i class="fas fa-headphones" title="Earphones"></i>{% endif %}
+            {% if not tx['took_charger'] and not tx['took_earphones'] %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state small">
+    <p>No return history yet.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

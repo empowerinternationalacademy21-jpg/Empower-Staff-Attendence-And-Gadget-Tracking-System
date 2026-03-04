@@ -1,0 +1,114 @@
+{% extends 'base.html' %}
+{% block title %}Register Staff Member — EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1><i class="fas fa-user-plus"></i> Register Staff Member</h1>
+  <a href="{{ url_for('staff_list') }}" class="btn btn-outline">
+    <i class="fas fa-arrow-left"></i> Back to Staff
+  </a>
+</div>
+
+<div class="form-card">
+  <div class="form-card-header">
+    <i class="fas fa-info-circle"></i>
+    Complete the form below to register a new staff member. Their record will be saved
+    to the database and they will appear on the gate attendance page immediately.
+  </div>
+
+  <form method="POST" action="{{ url_for('add_staff') }}" autocomplete="off">
+
+    <div class="form-section-label">Personal Information</div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Full Name <span class="required-star">*</span></label>
+        <div class="input-with-icon">
+          <i class="fas fa-user"></i>
+          <input type="text" name="name" class="form-control"
+                 placeholder="e.g. Alice Mensah" required autofocus/>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Department / Subject</label>
+        <div class="input-with-icon">
+          <i class="fas fa-chalkboard-teacher"></i>
+          <input type="text" name="department" class="form-control"
+                 placeholder="e.g. Mathematics, Science…"/>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-section-label">Contact Details</div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Phone Number <span class="required-star">*</span></label>
+        <div class="input-with-icon">
+          <i class="fas fa-phone"></i>
+          <input type="tel" name="phone" class="form-control"
+                 placeholder="e.g. 0241234567" required/>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Email Address <span class="required-star">*</span></label>
+        <div class="input-with-icon">
+          <i class="fas fa-envelope"></i>
+          <input type="email" name="email" class="form-control"
+                 placeholder="e.g. alice@school.edu" required/>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-divider"></div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary btn-lg">
+        <i class="fas fa-save"></i> Register Staff Member
+      </button>
+      <a href="{{ url_for('staff_list') }}" class="btn btn-outline btn-lg">Cancel</a>
+    </div>
+
+  </form>
+</div>
+
+<style>
+.form-section-label {
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--ink-ghost);
+  margin: 1.5rem 0 .9rem;
+  padding-bottom: .4rem;
+  border-bottom: 1px solid var(--ink-rule);
+}
+
+.form-section-label:first-of-type { margin-top: 0; }
+
+.required-star { color: var(--danger); font-size: .8rem; margin-left: 2px; }
+
+.input-with-icon {
+  position: relative;
+}
+.input-with-icon i {
+  position: absolute;
+  left: .9rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ink-ghost);
+  font-size: .85rem;
+  pointer-events: none;
+}
+.input-with-icon .form-control {
+  padding-left: 2.4rem;
+}
+
+.form-divider {
+  height: 1px;
+  background: var(--ink-rule);
+  margin: 1.5rem 0;
+}
+</style>
+
+{% endblock %}

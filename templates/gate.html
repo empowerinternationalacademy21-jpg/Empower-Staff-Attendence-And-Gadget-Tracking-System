@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block title %}Gate Attendance - {{ today.strftime('%d %b %Y') }}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div class="page-header-brand">
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="Empower International Academy" class="page-header-logo"/>
+    <h1> Gate Attendance</h1>
+  </div>
+  <span class="date-badge"><i class="fas fa-calendar"></i> {{ today.strftime('%A, %d %B %Y') }}</span>
+</div>
+
+{% set present_count = staff_list | selectattr('id', 'in', today_attendance.keys()) | selectattr('status', 'equalto', 'Present') | list | length %}
+<div class="gate-summary">
+  <span class="present-count">
+    <i class="fas fa-user-check"></i>
+    Present: <strong>{{ present_count }}</strong> / {{ staff_list | length }}
+  </span>
+</div>
+
+<div class="gate-container">
+  {% if staff_list %}
+  <div class="staff-grid">
+    {% for staff in staff_list %}
+    {% set att = today_attendance.get(staff['id']) %}
+    {% set is_present = att and att['status'] == 'Present' %}
+    <div class="staff-card {% if is_present %}present{% endif %}">
+      <div class="staff-avatar">{{ staff['name'][0] }}</div>
+      <div class="staff-details">
+        <h3>{{ staff['name'] }}</h3>
+        <p>{{ staff['department'] or '' }}</p>
+        {% if is_present and att['time_in'] %}
+        <span class="time-badge"><i class="fas fa-clock"></i> {{ att['time_in']|fmt_time }}</span>
+        {% endif %}
+      </div>
+      <form method="POST" action="{{ url_for('mark_attendance') }}">
+        <input type="hidden" name="staff_id" value="{{ staff['id'] }}"/>
+        <button type="submit" class="check-btn {% if is_present %}checked{% endif %}">
+          {% if is_present %}
+          <i class="fas fa-check-circle"></i>
+          {% else %}
+          <i class="far fa-circle"></i>
+          {% endif %}
+        </button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <i class="fas fa-users-slash"></i>
+    <p>No staff members registered yet.</p>
+    {% if session.get('logged_in') %}
+    <a href="{{ url_for('add_staff') }}" class="btn btn-primary">Add Staff</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

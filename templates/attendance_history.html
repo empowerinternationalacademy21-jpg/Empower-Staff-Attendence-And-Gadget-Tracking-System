@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block title %}Attendance History - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1><i class="fas fa-calendar-check"></i> Attendance History</h1>
+</div>
+
+<div class="filter-bar">
+  <form method="GET" action="{{ url_for('attendance_history') }}" class="filter-form">
+    <label><i class="fas fa-calendar"></i> Select Date:</label>
+    <input type="date" name="date" class="form-control date-picker" value="{{ selected_date.isoformat() }}"/>
+    <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i> View</button>
+  </form>
+  <span class="result-summary">
+    Showing: <strong>{{ selected_date.strftime('%A, %d %B %Y') }}</strong>
+  </span>
+</div>
+
+{% set present_count = all_staff | selectattr('id', 'in', records.keys()) | selectattr('status', 'equalto', 'Present') | list | length %}
+{% set total = all_staff | length %}
+{% set absent_count = total - present_count if total >= present_count else 0 %}
+<div class="summary-pills">
+  <span class="pill pill-green"><i class="fas fa-user-check"></i> Present: {{ present_count }}</span>
+  <span class="pill pill-red"><i class="fas fa-user-times"></i> Absent: {{ absent_count }}</span>
+  <span class="pill pill-blue"><i class="fas fa-users"></i> Total: {{ total }}</span>
+</div>
+
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr><th>#</th><th>Name</th><th>Department</th><th>Status</th><th>Time In</th></tr>
+    </thead>
+    <tbody>
+      {% for staff in all_staff %}
+      {% set att = records.get(staff['id']) %}
+      {% set is_present = att and att['status'] == 'Present' %}
+      <tr class="{{ 'row-present' if is_present else 'row-absent' }}">
+        <td>{{ loop.index }}</td>
+        <td>
+          <div class="staff-name-cell">
+            <div class="avatar-sm">{{ staff['name'][0] }}</div>
+            {{ staff['name'] }}
+          </div>
+        </td>
+        <td>{{ staff['department'] or '—' }}</td>
+        <td>
+          {% if is_present %}
+          <span class="badge badge-green"><i class="fas fa-check"></i> Present</span>
+          {% else %}
+          <span class="badge badge-red"><i class="fas fa-times"></i> Absent</span>
+          {% endif %}
+        </td>
+        <td>{{ att['time_in']|fmt_time if (att and att['time_in']) else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,190 @@
+{% extends 'base.html' %}
+{% block title %}12-Month Attendance — EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1><i class="fas fa-calendar-alt"></i> 12-Month Attendance Archive</h1>
+  <div style="display:flex;gap:.6rem">
+    <a href="{{ url_for('attendance_history') }}" class="btn btn-outline">
+      <i class="fas fa-calendar-day"></i> Daily View
+    </a>
+    <a href="{{ url_for('attendance_pdf', date=today.isoformat()) }}" class="btn btn-primary" target="_blank">
+      <i class="fas fa-file-pdf"></i> Today's PDF
+    </a>
+  </div>
+</div>
+
+<div class="archive-note">
+  <i class="fas fa-info-circle"></i>
+  Attendance resets automatically each day — each school day is tracked independently.
+  Records below span the last 12 months. Click any date to view or print the full report.
+</div>
+
+<div class="months-grid">
+{% for month in months %}
+{% set month_key = month.strftime('%Y-%m') %}
+<div class="month-block">
+  <div class="month-title">{{ month.strftime('%B %Y') }}</div>
+  <div class="dow-row">
+    {% for d in ['Mo','Tu','We','Th','Fr','Sa','Su'] %}
+    <span class="dow">{{ d }}</span>
+    {% endfor %}
+  </div>
+  <div class="day-grid">
+    {# leading blank cells #}
+    {% set first_dow = month.replace(day=1).weekday() %}
+    {% for _ in range(first_dow) %}
+    <span class="day-cell blank"></span>
+    {% endfor %}
+
+    {# day cells #}
+    {% if month.month == 12 %}
+      {% set next_month = month.replace(year=month.year+1, month=1) %}
+    {% else %}
+      {% set next_month = month.replace(month=month.month+1) %}
+    {% endif %}
+    {% set days_in_month = (next_month - month).days %}
+    {% for d in range(1, days_in_month + 1) %}
+      {% set ds = '%04d-%02d-%02d' | format(month.year, month.month, d) %}
+      {% set count = daily.get(ds, -1) %}
+      {% set is_today = ds == today.isoformat() %}
+      {% set is_future = ds > today.isoformat() %}
+      <a href="{{ url_for('attendance_history', date=ds) }}"
+         class="day-cell {% if is_today %}today{% elif is_future %}future{% elif count == -1 %}no-data{% elif count == 0 %}zero{% elif count < total_staff * 0.5 %}low{% elif count < total_staff %}partial{% else %}full{% endif %}"
+         title="{{ ds }}: {{ count if count >= 0 else 'No records' }} present">
+        {{ d }}
+      </a>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+</div>
+
+<!-- Legend -->
+<div class="legend">
+  <span class="legend-item"><span class="legend-dot full"></span> Full attendance</span>
+  <span class="legend-item"><span class="legend-dot partial"></span> Partial</span>
+  <span class="legend-item"><span class="legend-dot low"></span> Low (&lt;50%)</span>
+  <span class="legend-item"><span class="legend-dot zero"></span> All absent</span>
+  <span class="legend-item"><span class="legend-dot no-data"></span> No records</span>
+  <span class="legend-item"><span class="legend-dot future"></span> Future</span>
+</div>
+
+<style>
+.archive-note {
+  background: var(--navy-ghost);
+  border: 1px solid var(--ink-rule);
+  border-left: 4px solid var(--navy);
+  border-radius: var(--radius-sm);
+  padding: .8rem 1.2rem;
+  font-size: .88rem;
+  color: var(--ink-mid);
+  margin-bottom: 1.8rem;
+  display: flex;
+  gap: .6rem;
+  align-items: flex-start;
+}
+.archive-note i { color: var(--navy); margin-top: 2px; flex-shrink: 0; }
+
+.months-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1.2rem;
+  margin-bottom: 2rem;
+}
+
+.month-block {
+  background: var(--white);
+  border: 1px solid var(--ink-rule);
+  border-radius: var(--radius);
+  padding: 1rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,.04);
+}
+
+.month-title {
+  font-family: var(--font-display);
+  font-size: .9rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: .6rem;
+  text-align: center;
+  letter-spacing: .03em;
+}
+
+.dow-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: .25rem;
+}
+.dow {
+  font-size: .65rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--ink-ghost);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 2px 0;
+}
+
+.day-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.day-cell {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .72rem;
+  font-weight: 600;
+  border-radius: 4px;
+  text-decoration: none;
+  transition: transform .12s, opacity .12s;
+  cursor: pointer;
+}
+.day-cell:not(.blank):not(.future):hover {
+  transform: scale(1.18);
+  z-index: 2;
+  position: relative;
+}
+
+.day-cell.blank   { background: transparent; pointer-events: none; }
+.day-cell.future  { background: #f3f4f6; color: #d1d5db; pointer-events: none; cursor: default; }
+.day-cell.no-data { background: #f9fafb; color: #9ca3af; }
+.day-cell.zero    { background: #fee2e2; color: #dc2626; }
+.day-cell.low     { background: #fef3c7; color: #b45309; }
+.day-cell.partial { background: #d1fae5; color: #065f46; }
+.day-cell.full    { background: var(--navy); color: var(--white); }
+.day-cell.today   {
+  background: var(--green);
+  color: var(--white);
+  outline: 2px solid var(--navy);
+  outline-offset: 1px;
+}
+
+/* Legend */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.2rem;
+  padding: 1rem 1.2rem;
+  background: var(--white);
+  border: 1px solid var(--ink-rule);
+  border-radius: var(--radius);
+  font-size: .82rem;
+  color: var(--ink-mid);
+}
+.legend-item { display: flex; align-items: center; gap: .4rem; }
+.legend-dot {
+  width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0;
+}
+.legend-dot.full    { background: var(--navy); }
+.legend-dot.partial { background: #d1fae5; border: 1px solid #6ee7b7; }
+.legend-dot.low     { background: #fef3c7; border: 1px solid #fcd34d; }
+.legend-dot.zero    { background: #fee2e2; border: 1px solid #fca5a5; }
+.legend-dot.no-data { background: #f9fafb; border: 1px solid #e5e7eb; }
+.legend-dot.future  { background: #f3f4f6; border: 1px solid #e5e7eb; }
+</style>
+{% endblock %}

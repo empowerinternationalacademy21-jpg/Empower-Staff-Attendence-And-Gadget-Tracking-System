@@ -1,0 +1,99 @@
+{% extends 'base.html' %}
+{% block title %}Borrow a Tablet - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Tablet Sign-Out</h1>
+</div>
+
+<div class="form-card">
+  <div class="form-card-header">
+    <i class="fas fa-info-circle"></i>
+    Fill in your details to borrow a tablet. The return time will be calculated automatically.
+  </div>
+  <form method="POST" action="{{ url_for('tablet_signout') }}">
+    <div class="form-row">
+      <div class="form-group">
+        <label>Student Name *</label>
+        <input type="text" name="student_name" class="form-control" placeholder="Your full name" required/>
+      </div>
+      <div class="form-group">
+        <label>Class *</label>
+        <input type="text" name="student_class" class="form-control" placeholder="e.g. Grade 9A" required/>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Select Tablet *</label>
+        <select name="tablet_id" class="form-control" required>
+          <option value="">-- Choose a tablet --</option>
+          {% for tablet in tablets %}
+          <option value="{{ tablet['id'] }}">{{ tablet['tablet_id'] }} — {{ tablet['name'] or 'Tablet' }}</option>
+          {% endfor %}
+        </select>
+        {% if not tablets %}
+        <span class="form-note text-danger">No tablets available right now.</span>
+        {% endif %}
+      </div>
+      <div class="form-group">
+        <label>Number of Tablets</label>
+        <input type="number" name="quantity" class="form-control" value="1" min="1" max="5"/>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Duration *</label>
+        <select name="duration_hours" class="form-control" id="duration-select">
+          <option value="0.5">30 minutes</option>
+          <option value="1" selected>1 hour</option>
+          <option value="1.5">1.5 hours</option>
+          <option value="2">2 hours</option>
+          <option value="3">3 hours</option>
+          <option value="4">4 hours</option>
+          <option value="6">6 hours</option>
+          <option value="8">Full Day (8 hours)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Expected Return Time</label>
+        <input type="text" class="form-control" id="expected-return" readonly placeholder="Auto-calculated"/>
+      </div>
+    </div>
+
+    <div class="form-row checkbox-row">
+      <div class="form-group checkbox-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="took_charger"/>
+          <i class="fas fa-plug"></i> Took a Charger
+        </label>
+      </div>
+      <div class="form-group checkbox-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="took_earphones"/>
+          <i class="fas fa-headphones"></i> Took Earphones
+        </label>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary btn-lg" {% if not tablets %}disabled{% endif %}>
+        <i class="fas fa-sign-out-alt"></i> Sign Out Tablet
+      </button>
+    </div>
+  </form>
+</div>
+
+<script>
+function updateReturnTime() {
+  const dur = parseFloat(document.getElementById('duration-select').value);
+  const now = new Date();
+  const ret = new Date(now.getTime() + dur * 3600000);
+  document.getElementById('expected-return').value =
+    ret.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+document.getElementById('duration-select').addEventListener('change', updateReturnTime);
+updateReturnTime();
+</script>
+{% endblock %}

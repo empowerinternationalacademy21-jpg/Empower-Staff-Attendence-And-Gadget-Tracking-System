@@ -1,0 +1,196 @@
+{% extends 'base.html' %}
+{% block title %}Tablet Inventory — EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1> Tablet Inventory</h1>
+  <div style="display:flex;gap:.6rem">
+    <a href="{{ url_for('add_tablet') }}" class="btn btn-primary">
+       Register Tablets
+    </a>
+    <a href="{{ url_for('tablet_transactions') }}" class="btn btn-outline">
+      <i class="fas fa-list"></i> Transactions
+    </a>
+  </div>
+</div>
+
+{% if tablets %}
+
+{% set available_count = tablets | selectattr('current_status', 'equalto', 'Available') | list | length %}
+{% set borrowed_count  = tablets | selectattr('current_status', 'equalto', 'Borrowed')  | list | length %}
+
+<div class="inv-summary">
+  <div class="inv-pill inv-total">
+    <i class="fas fa-tablet-alt"></i>
+    <span><strong>{{ tablets|length }}</strong> Total</span>
+  </div>
+  <div class="inv-pill inv-available">
+    <i class="fas fa-check-circle"></i>
+    <span><strong>{{ available_count }}</strong> Available</span>
+  </div>
+  <div class="inv-pill inv-borrowed">
+    <i class="fas fa-hand-holding"></i>
+    <span><strong>{{ borrowed_count }}</strong> Borrowed</span>
+  </div>
+</div>
+
+<div class="tablet-grid">
+  {% for tablet in tablets %}
+  {% set status = tablet['current_status'] %}
+  <div class="tablet-card {{ 'borrowed' if status == 'Borrowed' else 'available' }}">
+    <div class="tablet-icon">
+      <i class="fas fa-tablet-alt"></i>
+    </div>
+    <div class="tablet-info">
+      <h3>{{ tablet.tablet_id }}</h3>
+      <p>{{ tablet.name or 'No description' }}</p>
+      <span class="badge {{ 'badge-yellow' if status == 'Borrowed' else 'badge-green' }}">
+        {% if status == 'Borrowed' %}
+          <i class="fas fa-hand-holding"></i>
+        {% else %}
+          <i class="fas fa-check"></i>
+        {% endif %}
+        {{ status }}
+      </span>
+
+      <!-- DELETE BUTTON -->
+      {% if status == 'Borrowed' %}
+        <button class="btn btn-sm btn-delete-disabled" disabled
+                title="Cannot delete — tablet is currently borrowed">
+          <i class="fas fa-trash-alt"></i> Damaged / Remove
+        </button>
+      {% else %}
+        <form method="POST" action="{{ url_for('delete_tablet', tablet_id=tablet.id) }}"
+              onsubmit="return confirmDelete('{{ tablet.tablet_id }}')">
+          <button type="submit" class="btn btn-sm btn-danger-soft">
+            <i class="fas fa-trash-alt"></i> Damaged / Remove
+          </button>
+        </form>
+      {% endif %}
+
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+
+<div class="empty-state-card">
+  <div class="empty-icon">
+    <i class="fas fa-tablet-alt"></i>
+  </div>
+  <h2>No Tablets Registered</h2>
+  <p>
+    Use <strong>Register Tablets</strong> to add your tablet inventory.
+    You can register multiple tablets at once by specifying a quantity.
+  </p>
+  <a href="{{ url_for('add_tablet') }}" class="btn btn-primary btn-lg">
+    <i class="fas fa-plus-circle"></i> Register Tablets Now
+  </a>
+</div>
+
+{% endif %}
+
+<style>
+/* ── Inventory Summary Pills ── */
+.inv-summary {
+  display: flex;
+  gap: .75rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+.inv-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .5rem 1.1rem;
+  border-radius: 999px;
+  font-size: .85rem;
+  font-weight: 600;
+  border: 1.5px solid;
+}
+.inv-total     { background: var(--navy-ghost);     color: var(--navy);       border-color: rgba(10,31,92,.15);  }
+.inv-available { background: var(--green-subtle);   color: var(--green-dark); border-color: rgba(15,158,94,.2);  }
+.inv-borrowed  { background: var(--warning-subtle); color: #7a4500;           border-color: rgba(232,135,10,.2); }
+.inv-pill strong { font-size: 1rem; }
+
+/* ── Delete Buttons ── */
+.btn-danger-soft {
+  margin-top: .65rem;
+  width: 100%;
+  justify-content: center;
+  background: var(--danger-subtle);
+  color: var(--danger);
+  border: 1.5px solid rgba(214,48,65,.2);
+  border-radius: 999px;
+  transition: all var(--duration) var(--ease);
+}
+.btn-danger-soft:hover {
+  background: var(--danger);
+  color: var(--white);
+  border-color: var(--danger);
+}
+.btn-delete-disabled {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  margin-top: .65rem;
+  width: 100%;
+  justify-content: center;
+  background: var(--surface-alt);
+  color: var(--ink-ghost);
+  border: 1.5px dashed var(--ink-rule);
+  border-radius: 999px;
+  cursor: not-allowed;
+  font-size: .8rem;
+  padding: .4rem .85rem;
+  font-weight: 600;
+}
+
+/* ── Empty State ── */
+.empty-state-card {
+  background: var(--white);
+  border: 2px dashed var(--ink-rule);
+  border-radius: var(--radius-lg);
+  padding: 4rem 2rem;
+  text-align: center;
+  max-width: 520px;
+  margin: 2rem auto;
+}
+.empty-icon {
+  width: 80px;
+  height: 80px;
+  background: var(--navy-ghost);
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1.5rem;
+}
+.empty-icon i { font-size: 2rem; color: var(--navy); opacity: .6; }
+.empty-state-card h2 {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  color: var(--navy);
+  margin-bottom: .75rem;
+}
+.empty-state-card p {
+  font-size: .9rem;
+  color: var(--ink-light);
+  line-height: 1.7;
+  margin-bottom: 1.75rem;
+}
+</style>
+
+<script>
+function confirmDelete(tabletId) {
+  return confirm(
+    '⚠️ Remove ' + tabletId + ' from the system?\n\n' +
+    'This should only be done if the tablet is damaged or lost.\n' +
+    'All past transaction history will be preserved.\n\n' +
+    'This action cannot be undone.'
+  );
+}
+</script>
+
+{% endblock %}

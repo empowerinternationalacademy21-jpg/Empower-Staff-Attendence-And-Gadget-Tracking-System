@@ -1,0 +1,114 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Admin Dashboard</h1>
+  <span class="date-badge"><i class="fas fa-calendar"></i> {{ today.strftime('%A, %d %B %Y') }}</span>
+</div>
+
+<!-- ── ATTENDANCE STATS ── -->
+<section class="section">
+  <h2 class="section-title"> Staff Attendance Today</h2>
+  <div class="stat-grid">
+    <div class="stat-card stat-blue">
+      <div class="stat-icon"><i class="fas fa-users"></i></div>
+      <div class="stat-info">
+        <span class="stat-number">{{ total_staff }}</span>
+        <span class="stat-label">Total Staff</span>
+      </div>
+    </div>
+    <div class="stat-card stat-green">
+      <div class="stat-icon"><i class="fas fa-user-check"></i></div>
+      <div class="stat-info">
+        <span class="stat-number">{{ present_today }}</span>
+        <span class="stat-label">Present Today</span>
+      </div>
+    </div>
+    <div class="stat-card stat-red">
+      <div class="stat-icon"><i class="fas fa-user-times"></i></div>
+      <div class="stat-info">
+        <span class="stat-number">{{ absent_today }}</span>
+        <span class="stat-label">Absent Today</span>
+      </div>
+    </div>
+  </div>
+  <div class="section-actions">
+    <a href="{{ url_for('gate') }}" class="btn btn-primary"><i class="fas fa-door-open"></i> Go to Gate</a>
+    <a href="{{ url_for('attendance_history') }}" class="btn btn-outline"><i class="fas fa-history"></i> View History</a>
+  </div>
+</section>
+
+<!-- ── TABLET STATS ── -->
+<section class="section">
+  <h2 class="section-title"> Tablet Overview</h2>
+  <div class="stat-grid">
+    <div class="stat-card stat-blue">
+      <div class="stat-icon"><i class="fas fa-tablet-alt"></i></div>
+      <div class="stat-info">
+        <span class="stat-number">{{ total_tablets }}</span>
+        <span class="stat-label">Total Tablets</span>
+      </div>
+    </div>
+    <div class="stat-card stat-yellow">
+      <div class="stat-icon"><i class="fas fa-hand-holding"></i></div>
+      <div class="stat-info">
+        <span class="stat-number">{{ borrowed_tablets }}</span>
+        <span class="stat-label">Currently Borrowed</span>
+      </div>
+    </div>
+    <div class="stat-card stat-red">
+      <div class="stat-icon"><i class="fas fa-exclamation-triangle"></i></div>
+      <div class="stat-info">
+        <span class="stat-number">{{ overdue_tablets|length }}</span>
+        <span class="stat-label">Overdue</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Overdue Alert -->
+  {% if overdue_tablets %}
+  <div class="alert alert-danger overdue-list">
+    <h4><i class="fas fa-bell"></i> Overdue Tablets!</h4>
+    {% for tx in overdue_tablets %}
+    <div class="overdue-item">
+      <i class="fas fa-tablet-alt"></i>
+      <strong>{{ tx['tab_code'] }}</strong> — Borrowed by <strong>{{ tx['student_name'] }}</strong>
+      ({{ tx['student_class'] }}) — Expected: {{ tx['expected_return_time']|fmt_dt_time }}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="section-actions">
+    <a href="{{ url_for('tablet_transactions') }}" class="btn btn-primary"><i class="fas fa-list"></i> View All Transactions</a>
+    <a href="{{ url_for('tablet_signout') }}" class="btn btn-outline"><i class="fas fa-plus"></i> New Sign-Out</a>
+  </div>
+</section>
+
+<!-- ── RECENTLY RETURNED ── -->
+{% if recently_returned %}
+<section class="section">
+  <h2 class="section-title"><i class="fas fa-undo-alt"></i> Recently Returned</h2>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Tablet</th><th>Student</th><th>Class</th><th>Sign-Out</th><th>Returned</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for tx in recently_returned %}
+      <tr>
+        <td><span class="badge badge-blue">{{ tx['tab_code'] }}</span></td>
+        <td>{{ tx.student_name }}</td>
+        <td>{{ tx.student_class }}</td>
+        <td>{{ tx['sign_out_time']|fmt_dt }}</td>
+        <td>{{ tx['sign_back_time']|fmt_dt }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% endblock %}

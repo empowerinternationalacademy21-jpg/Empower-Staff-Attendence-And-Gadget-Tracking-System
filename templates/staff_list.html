@@ -1,0 +1,165 @@
+{% extends 'base.html' %}
+{% block title %}Staff Members — EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1><i class="fas fa-users"></i> Staff Members</h1>
+  <a href="{{ url_for('add_staff') }}" class="btn btn-primary">
+    <i class="fas fa-user-plus"></i> Register Staff Member
+  </a>
+</div>
+
+{% if staff %}
+
+<!-- Summary bar -->
+<div class="staff-summary-bar">
+  <span><i class="fas fa-users"></i> <strong>{{ staff|length }}</strong> registered staff member{{ 's' if staff|length != 1 else '' }}</span>
+</div>
+
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th style="width:40px">#</th>
+        <th>Name</th>
+        <th>Department</th>
+        <th>Phone</th>
+        <th>Email</th>
+        <th style="width:100px">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in staff %}
+      <tr>
+        <td style="color:var(--ink-ghost);font-weight:700">{{ loop.index }}</td>
+        <td>
+          <div class="staff-name-cell">
+            <div class="avatar-sm">{{ s['name'][0] }}</div>
+            <span>{{ s['name'] }}</span>
+          </div>
+        </td>
+        <td>
+          {% if s['department'] %}
+          <span class="dept-pill">{{ s['department'] }}</span>
+          {% else %}
+          <span style="color:var(--ink-ghost)">—</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if s['phone'] %}
+          <span class="contact-cell"><i class="fas fa-phone"></i> {{ s['phone'] }}</span>
+          {% else %}
+          <span style="color:var(--ink-ghost)">—</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if s['email'] %}
+          <span class="contact-cell"><i class="fas fa-envelope"></i> {{ s['email'] }}</span>
+          {% else %}
+          <span style="color:var(--ink-ghost)">—</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="action-btns">
+            <a href="{{ url_for('edit_staff', staff_id=s['id']) }}"
+               class="btn btn-sm btn-outline" title="Edit">
+              <i class="fas fa-edit"></i>
+            </a>
+            <form method="POST" action="{{ url_for('delete_staff', staff_id=s['id']) }}"
+                  style="display:inline;"
+                  onsubmit="return confirm('Remove {{ s['name'] }} from the system?')">
+              <button class="btn btn-sm btn-danger" title="Remove"><i class="fas fa-trash"></i></button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% else %}
+
+<!-- Empty state — prompts admin to add first staff member -->
+<div class="empty-state-card">
+  <div class="empty-icon">
+    <i class="fas fa-users"></i>
+  </div>
+  <h2>No Staff Registered Yet</h2>
+  <p>
+    Click <strong>Register Staff Member</strong> to add your first teacher.
+    Each staff member will appear on the gate attendance page once registered.
+  </p>
+  <a href="{{ url_for('add_staff') }}" class="btn btn-primary btn-lg">
+    <i class="fas fa-user-plus"></i> Register First Staff Member
+  </a>
+</div>
+
+{% endif %}
+
+<style>
+.staff-summary-bar {
+  background: var(--white);
+  border: 1px solid var(--ink-rule);
+  border-radius: var(--radius-sm);
+  padding: .7rem 1.2rem;
+  font-size: .88rem;
+  color: var(--ink-mid);
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+.staff-summary-bar i { color: var(--navy); }
+.staff-summary-bar strong { color: var(--navy); }
+
+.dept-pill {
+  background: var(--navy-subtle);
+  color: var(--navy);
+  padding: .22rem .7rem;
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 600;
+}
+
+.contact-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .86rem;
+  color: var(--ink-mid);
+}
+.contact-cell i { color: var(--ink-ghost); font-size: .75rem; }
+
+.empty-state-card {
+  background: var(--white);
+  border: 2px dashed var(--ink-rule);
+  border-radius: var(--radius-lg);
+  padding: 4rem 2rem;
+  text-align: center;
+  max-width: 520px;
+  margin: 2rem auto;
+}
+.empty-icon {
+  width: 80px; height: 80px;
+  background: var(--navy-ghost);
+  border-radius: var(--radius-lg);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 1.5rem;
+}
+.empty-icon i { font-size: 2rem; color: var(--navy); opacity: .6; }
+.empty-state-card h2 {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  color: var(--navy);
+  margin-bottom: .75rem;
+}
+.empty-state-card p {
+  font-size: .9rem;
+  color: var(--ink-light);
+  line-height: 1.7;
+  margin-bottom: 1.75rem;
+}
+</style>
+
+{% endblock %}
