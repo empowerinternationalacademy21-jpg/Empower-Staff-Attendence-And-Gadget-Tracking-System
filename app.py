@@ -3,8 +3,10 @@ EIA Staff Attendance and Gadget Tracking System
 
 Backend: Flask + Turso (libSQL, hosted SQLite) via db.py
 Required environment variables:
-    TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, ADMIN_PASSWORD, SECRET_KEY
-Optional: ADMIN_USERNAME (defaults to "admin")
+    TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, SECRET_KEY
+Admin logins are stored in the Turso "admins" table (hashed passwords).
+Optional emergency login: set ADMIN_USERNAME (default "admin") and
+ADMIN_PASSWORD in the environment; it works even if the table is empty.
 """
 from flask import (Flask, render_template, request, redirect, url_for, flash,
                    session, jsonify, make_response, send_file)
@@ -13,6 +15,8 @@ from functools import wraps
 import hmac
 import os
 import io
+
+from werkzeug.security import check_password_hash
 
 from db import get_db, init_db
 
@@ -42,7 +46,7 @@ except Exception as e:
 # ─────────────────────────────────────────────
 
 ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD')  # must be set; no default
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD')  # optional emergency login
 
 
 def login_required(f):
@@ -71,12 +75,33 @@ def index():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
+        username = (request.form.get('username') or '').strip()
+        password = request.form.get('password') or ''
+
+        # 1) Admin accounts stored in the Turso "admins" table
+        try:
+            with get_db() as conn:
+                row = conn.execute(
+                    "SELECT username, password_hash, full_name FROM admins "
+                    "WHERE username=? AND is_active=1", (username,)
+                ).fetchone()
+            if row and check_password_hash(row['password_hash'], password):
+                session['logged_in'] = True
+                session['admin'] = row['username']
+                flash(f"Welcome back, {row['full_name'] or row['username']}!", 'success')
+                return redirect(url_for('dashboard'))
+        except Exception as e:
+            print(f"admin login lookup failed: {e}")
+
+        # 2) Optional emergency login from environment variables
         if (ADMIN_PASSWORD
-                and _safe_equals(request.form.get('username'), ADMIN_USERNAME)
-                and _safe_equals(request.form.get('password'), ADMIN_PASSWORD)):
+                and _safe_equals(username, ADMIN_USERNAME)
+                and _safe_equals(password, ADMIN_PASSWORD)):
             session['logged_in'] = True
+            session['admin'] = ADMIN_USERNAME
             flash('Welcome back, Admin!', 'success')
             return redirect(url_for('dashboard'))
+
         flash('Invalid credentials.', 'danger')
     return render_template('login.html')
 
