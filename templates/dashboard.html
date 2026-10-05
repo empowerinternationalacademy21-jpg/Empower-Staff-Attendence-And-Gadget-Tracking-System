@@ -50,6 +50,13 @@
         <span class="stat-label">Total Tablets</span>
       </div>
     </div>
+    <div class="stat-card stat-green">
+      <div class="stat-icon"><i class="fas fa-warehouse"></i></div>
+      <div class="stat-info">
+        <span class="stat-number">{{ in_storage }}</span>
+        <span class="stat-label">In Storage</span>
+      </div>
+    </div>
     <div class="stat-card stat-yellow">
       <div class="stat-icon"><i class="fas fa-hand-holding"></i></div>
       <div class="stat-info">
@@ -86,6 +93,57 @@
   </div>
 </section>
 
+<!-- ── ANALYTICS / CHARTS ── -->
+<section class="section">
+  <h2 class="section-title"><i class="fas fa-chart-pie"></i> Analytics</h2>
+
+  <div class="chart-grid">
+    <div class="chart-card">
+      <div class="chart-head">
+        <h3>Tablet Status</h3>
+        <span class="chart-sub">Where every tablet is right now</span>
+      </div>
+      <div class="chart-body">
+        <canvas id="chartTabletStatus"></canvas>
+        <div class="chart-empty" id="emptyTabletStatus">No tablets registered yet.</div>
+      </div>
+    </div>
+
+    <div class="chart-card chart-wide">
+      <div class="chart-head">
+        <h3>Sign-Outs vs Returns</h3>
+        <span class="chart-sub">Last 14 days</span>
+      </div>
+      <div class="chart-body">
+        <canvas id="chartDaily"></canvas>
+        <div class="chart-empty" id="emptyDaily">No tablet activity in the last 14 days.</div>
+      </div>
+    </div>
+
+    <div class="chart-card chart-wide">
+      <div class="chart-head">
+        <h3>Busiest Classes</h3>
+        <span class="chart-sub">Tablet sign-outs, last 30 days</span>
+      </div>
+      <div class="chart-body">
+        <canvas id="chartClasses"></canvas>
+        <div class="chart-empty" id="emptyClasses">No sign-outs in the last 30 days.</div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-head">
+        <h3>Staff Attendance Today</h3>
+        <span class="chart-sub">Present vs absent</span>
+      </div>
+      <div class="chart-body">
+        <canvas id="chartStaff"></canvas>
+        <div class="chart-empty" id="emptyStaff">No staff registered yet.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ── RECENTLY RETURNED ── -->
 {% if recently_returned %}
 <section class="section">
@@ -110,5 +168,242 @@
   </table>
 </section>
 {% endif %}
+
+<style>
+  .stat-grid .stat-card:nth-child(4) { animation-delay: 180ms; }
+
+  .chart-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.2rem;
+  }
+  .chart-card {
+    background: var(--white);
+    border: 1px solid var(--ink-rule);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 1.25rem 1.4rem 1.1rem;
+    position: relative;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .chart-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, var(--navy), var(--green));
+  }
+  .chart-wide { grid-column: span 2; }
+  .chart-head { margin-bottom: .9rem; }
+  .chart-head h3 {
+    font-family: var(--font-display);
+    font-size: .98rem; font-weight: 700;
+    color: var(--navy); margin: 0;
+  }
+  .chart-sub { font-size: .76rem; color: var(--ink-light); font-weight: 500; }
+  .chart-body { position: relative; height: 290px; }
+  .chart-body canvas { max-width: 100%; }
+  .chart-empty {
+    display: none;
+    position: absolute; inset: 0;
+    align-items: center; justify-content: center;
+    text-align: center;
+    color: var(--ink-ghost); font-size: .9rem; font-weight: 500;
+  }
+  .chart-body.is-empty canvas { visibility: hidden; }
+  .chart-body.is-empty .chart-empty { display: flex; }
+
+  @media (max-width: 1000px) {
+    .chart-grid { grid-template-columns: 1fr 1fr; }
+    .chart-wide { grid-column: span 2; }
+  }
+  @media (max-width: 640px) {
+    .chart-grid { grid-template-columns: 1fr; }
+    .chart-wide { grid-column: span 1; }
+    .chart-body { height: 260px; }
+  }
+</style>
+
+<script src="{{ url_for('static', filename='js/chart.umd.js') }}"></script>
+<script>
+(function () {
+  if (typeof Chart === 'undefined') {
+    document.querySelectorAll('.chart-body').forEach(function (b) {
+      b.classList.add('is-empty');
+      var m = b.querySelector('.chart-empty');
+      if (m) m.textContent = 'Charts could not load. Check that static/js/chart.umd.js is uploaded.';
+    });
+    return;
+  }
+
+  var D = {{ chart_data|tojson }};
+
+  // Theme colours (match style.css)
+  var NAVY = '#063a6f', GREEN = '#0fa657', AMBER = '#e8870a', RED = '#d63041',
+      BLUE = '#2672d4', GRID = '#e8ecf5', INK = '#5a6a96';
+
+  Chart.defaults.font.family = "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif";
+  Chart.defaults.font.size = 12;
+  Chart.defaults.color = INK;
+  Chart.defaults.animation.duration = 900;
+  Chart.defaults.plugins.tooltip.backgroundColor = '#0d1b3e';
+  Chart.defaults.plugins.tooltip.padding = 10;
+  Chart.defaults.plugins.tooltip.cornerRadius = 8;
+  Chart.defaults.plugins.tooltip.boxPadding = 4;
+
+  function sum(a) { return a.reduce(function (x, y) { return x + y; }, 0); }
+
+  function show(id, emptyId, hasData) {
+    var canvas = document.getElementById(id);
+    if (!hasData) { canvas.parentNode.classList.add('is-empty'); return null; }
+    return canvas.getContext('2d');
+  }
+
+  // Draws the total in the middle of a doughnut
+  var centerText = {
+    id: 'centerText',
+    afterDraw: function (chart, args, opts) {
+      if (!opts || opts.text === undefined) return;
+      var a = chart.chartArea, ctx = chart.ctx;
+      var x = (a.left + a.right) / 2, y = (a.top + a.bottom) / 2;
+      ctx.save();
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#0d1b3e';
+      ctx.font = '800 30px ' + Chart.defaults.font.family;
+      ctx.fillText(String(opts.text), x, y - 8);
+      ctx.fillStyle = INK;
+      ctx.font = '600 11px ' + Chart.defaults.font.family;
+      ctx.fillText(String(opts.label || '').toUpperCase(), x, y + 16);
+      ctx.restore();
+    }
+  };
+
+  function doughnut(id, emptyId, block, colors, centerLabel) {
+    var ctx = show(id, emptyId, sum(block.values) > 0);
+    if (!ctx) return;
+    new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: block.labels,
+        datasets: [{
+          data: block.values,
+          backgroundColor: colors,
+          borderColor: '#ffffff',
+          borderWidth: 3,
+          hoverOffset: 8
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '68%',
+        plugins: {
+          centerText: { text: block.total, label: centerLabel },
+          legend: {
+            position: 'bottom',
+            labels: {
+              usePointStyle: true, pointStyle: 'circle', padding: 14,
+              generateLabels: function (chart) {
+                var ds = chart.data.datasets[0];
+                return chart.data.labels.map(function (l, i) {
+                  return {
+                    text: l + ' (' + ds.data[i] + ')',
+                    fillStyle: ds.backgroundColor[i],
+                    strokeStyle: ds.backgroundColor[i],
+                    pointStyle: 'circle',
+                    hidden: !chart.getDataVisibility(i),
+                    index: i
+                  };
+                });
+              }
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: function (c) {
+                var total = sum(c.dataset.data);
+                var pct = total ? Math.round(c.parsed / total * 100) : 0;
+                return ' ' + c.label + ': ' + c.parsed + ' (' + pct + '%)';
+              }
+            }
+          }
+        }
+      },
+      plugins: [centerText]
+    });
+  }
+
+  // 1) Tablet status doughnut
+  doughnut('chartTabletStatus', 'emptyTabletStatus', D.tablet_status,
+           [GREEN, AMBER, RED], 'Tablets');
+
+  // 2) Sign-outs vs returns (last 14 days)
+  var dailyHas = sum(D.daily.signouts) + sum(D.daily.returns) > 0;
+  var dctx = show('chartDaily', 'emptyDaily', dailyHas);
+  if (dctx) {
+    var gOut = dctx.createLinearGradient(0, 0, 0, 290);
+    gOut.addColorStop(0, 'rgba(6,58,111,.28)'); gOut.addColorStop(1, 'rgba(6,58,111,0)');
+    var gBack = dctx.createLinearGradient(0, 0, 0, 290);
+    gBack.addColorStop(0, 'rgba(15,166,87,.25)'); gBack.addColorStop(1, 'rgba(15,166,87,0)');
+    new Chart(dctx, {
+      type: 'line',
+      data: {
+        labels: D.daily.labels,
+        datasets: [
+          { label: 'Signed out', data: D.daily.signouts, borderColor: NAVY,
+            backgroundColor: gOut, fill: true, tension: .35, borderWidth: 2.5,
+            pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: '#fff',
+            pointBorderColor: NAVY, pointBorderWidth: 2 },
+          { label: 'Returned', data: D.daily.returns, borderColor: GREEN,
+            backgroundColor: gBack, fill: true, tension: .35, borderWidth: 2.5,
+            pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: '#fff',
+            pointBorderColor: GREEN, pointBorderWidth: 2 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 7 } },
+          y: { beginAtZero: true, grid: { color: GRID }, border: { display: false },
+               ticks: { precision: 0 } }
+        },
+        plugins: {
+          legend: { position: 'top', align: 'end',
+                    labels: { usePointStyle: true, pointStyle: 'circle', padding: 16 } }
+        }
+      }
+    });
+  }
+
+  // 3) Busiest classes (horizontal bars)
+  var cctx = show('chartClasses', 'emptyClasses', D.classes.values.length > 0);
+  if (cctx) {
+    new Chart(cctx, {
+      type: 'bar',
+      data: {
+        labels: D.classes.labels,
+        datasets: [{
+          label: 'Sign-outs', data: D.classes.values,
+          backgroundColor: [NAVY, BLUE, GREEN, AMBER, '#7a8fc2', '#9aaac8'],
+          borderRadius: 8, borderSkipped: false, maxBarThickness: 26
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { beginAtZero: true, grid: { color: GRID }, border: { display: false },
+               ticks: { precision: 0 } },
+          y: { grid: { display: false } }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+  // 4) Staff attendance doughnut
+  doughnut('chartStaff', 'emptyStaff', D.staff, [GREEN, RED], 'Staff');
+})();
+</script>
 
 {% endblock %}
