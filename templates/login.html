@@ -2,8 +2,33 @@
 {% block title %}Admin Login — EIA System{% endblock %}
 {% block content %}
 
+<style>
+  /* Full-page school photo behind the login card */
+  .login-bg {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background:
+      linear-gradient(135deg,
+        rgba(6,58,111,.70) 0%,
+        rgba(6,58,111,.42) 45%,
+        rgba(11,138,72,.52) 100%),
+      url("{{ url_for('static', filename='eia.jpg') }}") center 62% / cover no-repeat;
+    background-color: #063a6f; /* shown while the photo loads */
+  }
+  .auth-card.login-card {
+    background: rgba(255,255,255,.95);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,.55);
+    box-shadow: 0 24px 60px rgba(4,30,60,.45);
+  }
+</style>
+
+<div class="login-bg" aria-hidden="true"></div>
+
 <div class="auth-container">
-  <div class="auth-card">
+  <div class="auth-card login-card">
     <div class="auth-header">
       <div class="auth-logo">
         <img src="{{ url_for('static', filename='logo.png') }}" alt="Empower International Academy" class="auth-brand-logo"/>
