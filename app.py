@@ -93,8 +93,13 @@ def seed_data():
 # AUTH
 # ─────────────────────────────────────────────
 
-ADMIN_USERNAME = 'admin'
-ADMIN_PASSWORD = 'eia2024'
+# All accounts below have full admin access.
+# Format:  'username': 'password'   (usernames are case-sensitive)
+ADMIN_ACCOUNTS = {
+    'admin':   'eia2024',
+    'U.Isaac': 'isaac2024',
+    'Enid':    'A.Enid2024',
+}
 
 def login_required(f):
     @wraps(f)
@@ -117,10 +122,12 @@ def index():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        if (request.form.get('username') == ADMIN_USERNAME and
-                request.form.get('password') == ADMIN_PASSWORD):
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        if username in ADMIN_ACCOUNTS and ADMIN_ACCOUNTS[username] == password:
             session['logged_in'] = True
-            flash('Welcome back, Admin!', 'success')
+            session['admin_user'] = username
+            flash(f'Welcome back, {username}!', 'success')
             return redirect(url_for('dashboard'))
         flash('Invalid credentials.', 'danger')
     return render_template('login.html')
