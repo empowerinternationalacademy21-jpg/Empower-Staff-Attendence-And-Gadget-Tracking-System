@@ -99,6 +99,7 @@ ADMIN_ACCOUNTS = {
     'admin':   'eia2024',
     'U.Isaac': 'isaac2024',
     'Enid':    'A.Enid2024',
+    'academicminister': 'academics1234',
 }
 
 def login_required(f):
