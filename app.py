@@ -183,6 +183,68 @@ def dashboard():
             ORDER BY tt.sign_back_time DESC LIMIT 5
         """).fetchall()
 
+        # ── Chart data ───────────────────────────────────────────────────
+        # Tablets physically out right now (one tablet can only be out once)
+        out_now = conn.execute("""
+            SELECT COUNT(DISTINCT tt.tablet_id)
+            FROM tablet_transactions tt
+            JOIN tablets t ON tt.tablet_id = t.id
+            WHERE tt.status='Borrowed' AND t.is_active=1
+        """).fetchone()[0]
+        overdue_now = conn.execute("""
+            SELECT COUNT(DISTINCT tt.tablet_id)
+            FROM tablet_transactions tt
+            JOIN tablets t ON tt.tablet_id = t.id
+            WHERE tt.status='Borrowed' AND t.is_active=1
+              AND tt.expected_return_time < ?
+        """, (now,)).fetchone()[0]
+        in_storage    = max(total_tablets - out_now, 0)
+        out_on_time   = max(out_now - overdue_now, 0)
+
+        # Sign-outs vs returns for the last 14 days (stored times are UTC)
+        utc_today = datetime.utcnow().date()
+        days = [utc_today - timedelta(days=i) for i in range(13, -1, -1)]
+        start = days[0].isoformat()
+        out_by_day = {r['d']: r['c'] for r in conn.execute(
+            "SELECT substr(sign_out_time,1,10) AS d, COUNT(*) AS c "
+            "FROM tablet_transactions WHERE substr(sign_out_time,1,10) >= ? "
+            "GROUP BY d", (start,)).fetchall()}
+        back_by_day = {r['d']: r['c'] for r in conn.execute(
+            "SELECT substr(sign_back_time,1,10) AS d, COUNT(*) AS c "
+            "FROM tablet_transactions "
+            "WHERE sign_back_time IS NOT NULL AND substr(sign_back_time,1,10) >= ? "
+            "GROUP BY d", (start,)).fetchall()}
+
+        # Busiest classes over the last 30 days
+        since30 = (utc_today - timedelta(days=30)).isoformat()
+        class_rows = conn.execute(
+            "SELECT COALESCE(NULLIF(UPPER(TRIM(student_class)), ''), 'UNSPECIFIED') AS cls, "
+            "COUNT(*) AS c FROM tablet_transactions "
+            "WHERE substr(sign_out_time,1,10) >= ? "
+            "GROUP BY cls ORDER BY c DESC, cls LIMIT 6", (since30,)).fetchall()
+
+    chart_data = {
+        'tablet_status': {
+            'labels': ['In storage', 'Out (on time)', 'Overdue'],
+            'values': [in_storage, out_on_time, overdue_now],
+            'total':  total_tablets,
+        },
+        'daily': {
+            'labels':   [d.strftime('%d %b') for d in days],
+            'signouts': [out_by_day.get(d.isoformat(), 0) for d in days],
+            'returns':  [back_by_day.get(d.isoformat(), 0) for d in days],
+        },
+        'classes': {
+            'labels': [r['cls'] for r in class_rows],
+            'values': [r['c'] for r in class_rows],
+        },
+        'staff': {
+            'labels': ['Present', 'Absent'],
+            'values': [present_today, max(absent_today, 0)],
+            'total':  total_staff,
+        },
+    }
+
     return render_template('dashboard.html',
         total_staff=total_staff,
         present_today=present_today,
@@ -191,6 +253,8 @@ def dashboard():
         borrowed_tablets=borrowed_count,
         overdue_tablets=overdue,
         recently_returned=recently_returned,
+        in_storage=in_storage,
+        chart_data=chart_data,
         today=date.today()
     )
 
