@@ -47,10 +47,11 @@ http://127.0.0.1:5000
 ```
 
 ## 🔐 Admin Login
-- **Username:** `admin`
-- **Password:** `eia2024`
+Admin accounts are defined in the `ADMIN_ACCOUNTS` dictionary in `app.py`
+(`admin`, `U.Isaac`, `Enid` and `academicminister`). All accounts have full admin access.
+To add or change an account, edit that dictionary.
 
-> ⚠️ Change the password in `app.py` before deploying to production.
+> ⚠️ Change the default passwords in `app.py` before deploying to production.
 
 ## 📌 Key URLs
 
