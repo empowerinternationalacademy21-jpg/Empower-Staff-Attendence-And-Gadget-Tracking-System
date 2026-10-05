@@ -21,7 +21,7 @@
 
 <div class="hero">
 
-  <video class="hero-video" autoplay muted loop playsinline preload="auto">
+  <video class="hero-video" id="heroVideo" autoplay muted loop playsinline webkit-playsinline disablepictureinpicture preload="auto">
     <source src="{{ url_for('static', filename='videos/empower.mp4') }}" type="video/mp4">
   </video>
 
@@ -125,7 +125,7 @@
   object-position: center;
   z-index: 0;
   /* Lighten + warm-tone the video to blend with cream background */
-  filter: brightness(0.78) saturate(0.65) sepia(0.18);
+  filter: brightness(0.95) saturate(0.85) sepia(0.08);
   pointer-events: none;
 }
 
@@ -136,14 +136,14 @@
   z-index: 1;
   background:
     linear-gradient(135deg,
-      rgba(250,247,242,0.65) 0%,
-      rgba(212,168,67,0.12)  50%,
-      rgba(250,247,242,0.72) 100%
+      rgba(250,247,242,0.40) 0%,
+      rgba(212,168,67,0.08)  50%,
+      rgba(250,247,242,0.48) 100%
     ),
     linear-gradient(to bottom,
-      rgba(250,247,242,0.20) 0%,
-      rgba(250,247,242,0.05) 35%,
-      rgba(250,247,242,0.88) 100%
+      rgba(250,247,242,0.10) 0%,
+      rgba(250,247,242,0.00) 35%,
+      rgba(250,247,242,0.70) 100%
     );
   pointer-events: none;
 }
@@ -389,5 +389,30 @@
 }
 </style>
 {% endraw %}
+
+<script>
+(function () {
+  var v = document.getElementById('heroVideo');
+  if (!v) return;
+  v.muted = true;                       // autoplay is only allowed while muted
+  function tryPlay() {
+    var p = v.play();
+    if (p && p.catch) p.catch(function () {});
+  }
+  tryPlay();
+  v.addEventListener('canplay', tryPlay);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) tryPlay();
+  });
+  // If the browser (e.g. data-saver / low-power mode) blocked autoplay,
+  // start the video on the visitor's first touch or click.
+  ['touchstart', 'click', 'scroll'].forEach(function (evt) {
+    window.addEventListener(evt, function once() {
+      if (v.paused) tryPlay();
+      window.removeEventListener(evt, once);
+    }, { passive: true });
+  });
+})();
+</script>
 
 {% endblock %}
