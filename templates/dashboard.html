@@ -82,6 +82,7 @@
       <i class="fas fa-tablet-alt"></i>
       <strong>{{ tx['tab_code'] }}</strong> — Borrowed by <strong>{{ tx['student_name'] }}</strong>
       ({{ tx['student_class'] }}) — Expected: {{ tx['expected_return_time']|fmt_dt_time }}
+      {% if tx['signed_out_by'] %}— Signed out by <strong>{{ tx['signed_out_by'] }}</strong>{% endif %}
     </div>
     {% endfor %}
   </div>
@@ -151,7 +152,7 @@
   <table class="data-table">
     <thead>
       <tr>
-        <th>Tablet</th><th>Student</th><th>Class</th><th>Sign-Out</th><th>Returned</th>
+        <th>Tablet</th><th>Student</th><th>Class</th><th>Sign-Out</th><th>Signed Out By</th><th>Returned</th><th>Signed In By</th>
       </tr>
     </thead>
     <tbody>
@@ -161,7 +162,9 @@
         <td>{{ tx.student_name }}</td>
         <td>{{ tx.student_class }}</td>
         <td>{{ tx['sign_out_time']|fmt_dt }}</td>
+        <td>{{ tx['signed_out_by'] or '—' }}</td>
         <td>{{ tx['sign_back_time']|fmt_dt }}</td>
+        <td>{{ tx['signed_back_by'] or '—' }}</td>
       </tr>
       {% endfor %}
     </tbody>
