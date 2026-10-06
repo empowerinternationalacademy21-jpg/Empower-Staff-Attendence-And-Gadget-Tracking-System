@@ -159,7 +159,51 @@ def dashboard():
             ORDER BY tt.sign_back_time DESC LIMIT 5
         """).fetchall()
 
+        # ---- Data for the dashboard charts ----
+        since = (date.today() - timedelta(days=13)).isoformat()
+        out_rows = conn.execute(
+            "SELECT substr(sign_out_time,1,10) AS d, COUNT(*) AS c "
+            "FROM tablet_transactions WHERE substr(sign_out_time,1,10) >= ? "
+            "GROUP BY d", (since,)).fetchall()
+        back_rows = conn.execute(
+            "SELECT substr(sign_back_time,1,10) AS d, COUNT(*) AS c "
+            "FROM tablet_transactions WHERE sign_back_time IS NOT NULL "
+            "AND substr(sign_back_time,1,10) >= ? GROUP BY d", (since,)).fetchall()
+        class_rows = conn.execute(
+            "SELECT student_class AS cls, COUNT(*) AS c FROM tablet_transactions "
+            "WHERE student_class IS NOT NULL AND student_class <> '' "
+            "GROUP BY student_class ORDER BY c DESC LIMIT 8").fetchall()
+
+    out_map = {r['d']: r['c'] for r in out_rows}
+    back_map = {r['d']: r['c'] for r in back_rows}
+    days = [(date.today() - timedelta(days=i)) for i in range(13, -1, -1)]
+    overdue_n = len(overdue)
+    chart_data = {
+        'tablet_status': {
+            'labels': ['Available', 'Borrowed', 'Overdue'],
+            'values': [max(total_tablets - borrowed_count, 0),
+                       max(borrowed_count - overdue_n, 0),
+                       overdue_n],
+            'total': total_tablets,
+        },
+        'daily': {
+            'labels': [d.strftime('%d %b') for d in days],
+            'signouts': [out_map.get(d.isoformat(), 0) for d in days],
+            'returns': [back_map.get(d.isoformat(), 0) for d in days],
+        },
+        'classes': {
+            'labels': [r['cls'] for r in class_rows],
+            'values': [r['c'] for r in class_rows],
+        },
+        'staff': {
+            'labels': ['Present', 'Absent'],
+            'values': [present_today, max(absent_today, 0)],
+            'total': total_staff,
+        },
+    }
+
     return render_template('dashboard.html',
+                           chart_data=chart_data,
                            total_staff=total_staff,
                            present_today=present_today,
                            absent_today=absent_today,
