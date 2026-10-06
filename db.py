@@ -1,15 +1,67 @@
 """
 Turso (libSQL) database helper for the EIA system.
 
-Gives app.py the same style it already uses with sqlite3:
+Talks to Turso over plain HTTPS (the "Hrana over HTTP" pipeline API) using
+the `requests` library. This replaces the native `libsql` Python package,
+which crashed/hung inside gunicorn workers on Render
+("failed to join thread: Resource deadlock avoided" -> WORKER TIMEOUT -> 502).
+
+Same usage style app.py already has:
     with get_db() as conn:
         conn.execute("SELECT ...", (param,)).fetchone()
-        row['name']   and   row[0]
-Reads credentials from environment variables:
-    TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
+        row['name']   and   row[0]   and   dict(row)
+
+Environment variables:
+    TURSO_DATABASE_URL   e.g. libsql://mydb-myorg.turso.io
+    TURSO_AUTH_TOKEN     database token
+
+Note: each statement is committed on its own (autocommit).
 """
+import base64
 import os
-import libsql
+
+import requests
+
+REQUEST_TIMEOUT = 15  # seconds; a slow database can never hang a worker
+
+_session = requests.Session()
+
+
+def _http_url():
+    url = os.environ["TURSO_DATABASE_URL"].strip()
+    for prefix, repl in (("libsql://", "https://"), ("wss://", "https://"),
+                         ("ws://", "http://")):
+        if url.startswith(prefix):
+            url = repl + url[len(prefix):]
+            break
+    return url.rstrip("/") + "/v2/pipeline"
+
+
+def _encode(v):
+    if v is None:
+        return {"type": "null"}
+    if isinstance(v, bool):
+        return {"type": "integer", "value": str(int(v))}
+    if isinstance(v, int):
+        return {"type": "integer", "value": str(v)}
+    if isinstance(v, float):
+        return {"type": "float", "value": v}
+    if isinstance(v, (bytes, bytearray)):
+        return {"type": "blob", "base64": base64.b64encode(bytes(v)).decode()}
+    return {"type": "text", "value": str(v)}
+
+
+def _decode(cell):
+    t = cell.get("type")
+    if t == "null":
+        return None
+    if t == "integer":
+        return int(cell["value"])
+    if t == "float":
+        return float(cell["value"])
+    if t == "blob":
+        return base64.b64decode(cell.get("base64", ""))
+    return cell.get("value")
 
 
 class Row(dict):
@@ -26,42 +78,61 @@ class Row(dict):
 
 
 class Result:
-    def __init__(self, cur):
-        self._cur = cur
-        self._cols = [d[0] for d in (cur.description or [])]
+    def __init__(self, cols, rows, lastrowid=None, rowcount=0):
+        self._cols = cols
+        self._rows = rows
+        self._i = 0
+        self.lastrowid = lastrowid
+        self.rowcount = rowcount
 
     def fetchone(self):
-        r = self._cur.fetchone()
-        return Row(self._cols, r) if r is not None else None
+        if self._i >= len(self._rows):
+            return None
+        r = self._rows[self._i]
+        self._i += 1
+        return Row(self._cols, r)
 
     def fetchall(self):
-        return [Row(self._cols, r) for r in self._cur.fetchall()]
+        rows = self._rows[self._i:]
+        self._i = len(self._rows)
+        return [Row(self._cols, r) for r in rows]
 
 
 class Conn:
-    def __init__(self):
-        self._raw = libsql.connect(
-            database=os.environ["TURSO_DATABASE_URL"],
-            auth_token=os.environ["TURSO_AUTH_TOKEN"],
-        )
-
     def execute(self, sql, params=()):
-        return Result(self._raw.execute(sql, tuple(params)))
+        body = {
+            "requests": [
+                {"type": "execute",
+                 "stmt": {"sql": sql, "args": [_encode(p) for p in tuple(params)]}},
+                {"type": "close"},
+            ]
+        }
+        resp = _session.post(
+            _http_url(),
+            json=body,
+            headers={"Authorization": "Bearer " + os.environ["TURSO_AUTH_TOKEN"]},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Turso HTTP {resp.status_code}: {resp.text[:300]}")
+        first = resp.json()["results"][0]
+        if first.get("type") == "error":
+            raise RuntimeError("Turso error: " + first["error"].get("message", "unknown"))
+        res = first["response"]["result"]
+        cols = [c.get("name") for c in res.get("cols", [])]
+        rows = [[_decode(c) for c in r] for r in res.get("rows", [])]
+        lid = res.get("last_insert_rowid")
+        return Result(cols, rows,
+                      int(lid) if lid not in (None, "") else None,
+                      res.get("affected_row_count", 0))
+
+    def commit(self):  # statements are already committed individually
+        pass
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        try:
-            if exc_type is None:
-                self._raw.commit()
-            else:
-                self._raw.rollback()
-        finally:
-            try:
-                self._raw.close()
-            except Exception:
-                pass
         return False
 
 
