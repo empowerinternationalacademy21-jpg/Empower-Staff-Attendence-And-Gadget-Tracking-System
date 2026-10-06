@@ -16,7 +16,7 @@
       <thead>
         <tr>
           <th>Tablet</th><th>Student</th><th>Class</th><th>Qty</th>
-          <th>Signed Out</th><th>Expected Return</th><th>Accessories</th><th>Status</th><th>Action</th>
+          <th>Signed Out</th><th>Signed Out By</th><th>Expected Return</th><th>Accessories</th><th>Status</th><th>Action</th>
         </tr>
       </thead>
       <tbody>
@@ -28,6 +28,7 @@
           <td>{{ tx['student_class'] }}</td>
           <td>{{ tx['quantity'] }}</td>
           <td>{{ tx['sign_out_time']|fmt_dt }}</td>
+          <td><i class="fas fa-user-shield"></i> {{ tx['signed_out_by'] or '—' }}</td>
           <td>
             {{ tx['expected_return_time']|fmt_dt_time }}
             {% if overdue %}<span class="badge badge-red">OVERDUE</span>{% endif %}
@@ -65,7 +66,7 @@
       <thead>
         <tr>
           <th>Tablet</th><th>Student</th><th>Class</th>
-          <th>Signed Out</th><th>Returned</th><th>Duration</th><th>Accessories</th>
+          <th>Signed Out</th><th>Signed Out By</th><th>Returned</th><th>Signed In By</th><th>Duration</th><th>Accessories</th>
         </tr>
       </thead>
       <tbody>
@@ -75,7 +76,9 @@
           <td>{{ tx['student_name'] }}</td>
           <td>{{ tx['student_class'] }}</td>
           <td>{{ tx['sign_out_time']|fmt_dt }}</td>
+          <td><i class="fas fa-user-shield"></i> {{ tx['signed_out_by'] or '—' }}</td>
           <td>{{ tx['sign_back_time']|fmt_dt }}</td>
+          <td><i class="fas fa-user-check"></i> {{ tx['signed_back_by'] or '—' }}</td>
           <td>{{ tx['duration_hours'] }}h</td>
           <td>
             {% if tx['took_charger'] %}<i class="fas fa-plug" title="Charger"></i> {% endif %}
