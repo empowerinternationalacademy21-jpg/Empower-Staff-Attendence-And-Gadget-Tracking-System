@@ -188,6 +188,8 @@ CREATE TABLE IF NOT EXISTS tablet_transactions (
     sign_out_time TEXT DEFAULT (datetime('now')),
     expected_return_time TEXT,
     sign_back_time TEXT,
+    signed_out_by TEXT,
+    signed_back_by TEXT,
     took_charger INTEGER DEFAULT 0,
     took_earphones INTEGER DEFAULT 0,
     status TEXT DEFAULT 'Borrowed',
@@ -196,9 +198,22 @@ CREATE TABLE IF NOT EXISTS tablet_transactions (
 """
 
 
+# Columns added after the first release. Added automatically to existing
+# databases (existing rows are kept; the new columns are simply empty for them).
+MIGRATIONS = [
+    ("tablet_transactions", "signed_out_by", "TEXT"),
+    ("tablet_transactions", "signed_back_by", "TEXT"),
+]
+
+
 def init_db():
-    """Creates the tables if they don't exist (safe to run on existing data)."""
+    """Creates missing tables and columns (safe to run on existing data)."""
     with get_db() as conn:
         for stmt in SCHEMA.split(";"):
             if stmt.strip():
                 conn.execute(stmt)
+        for table, column, decl in MIGRATIONS:
+            existing = [r["name"] for r in
+                        conn.execute(f"PRAGMA table_info({table})").fetchall()]
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
