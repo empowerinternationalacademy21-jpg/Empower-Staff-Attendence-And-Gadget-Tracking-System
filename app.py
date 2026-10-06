@@ -34,12 +34,28 @@ from reportlab.graphics.shapes import Drawing, Rect, String, Line, Circle
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or os.urandom(24).hex()
 
-# Create tables if they don't exist (safe on existing data).
-# Wrapped so a temporary database problem doesn't stop the app from starting.
+# Create tables/columns if they don't exist (safe on existing data).
+# If the database is briefly unreachable at startup, this is retried on the
+# next request until it succeeds once, so the app never runs on an old schema.
+_schema_ready = False
 try:
     init_db()
+    _schema_ready = True
 except Exception as e:
     print(f"init_db failed: {e}")
+
+
+@app.before_request
+def _ensure_schema():
+    global _schema_ready
+    if _schema_ready or request.path.startswith('/static'):
+        return
+    try:
+        init_db()
+        _schema_ready = True
+    except Exception as e:
+        print(f"init_db retry failed: {e}")
+
 
 # ─────────────────────────────────────────────
 # AUTH
@@ -52,11 +68,27 @@ ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD')  # optional emergency login
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if 'logged_in' not in session:
+        # 'admin' must be present so every action can be attributed to a
+        # named admin account (older sessions without it must log in again).
+        if 'logged_in' not in session or not session.get('admin'):
             flash('Please log in to access this page.', 'warning')
+            if request.method == 'GET':
+                session['login_next'] = request.full_path.rstrip('?')
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated
+
+
+def current_admin():
+    """Username of the logged-in admin (recorded on tablet sign-out/return)."""
+    return session.get('admin')
+
+
+def _after_login_url():
+    nxt = session.pop('login_next', None)
+    if nxt and nxt.startswith('/') and not nxt.startswith('//') and '\\' not in nxt:
+        return nxt
+    return url_for('dashboard')
 
 
 def _safe_equals(a, b):
@@ -89,7 +121,7 @@ def login():
                 session['logged_in'] = True
                 session['admin'] = row['username']
                 flash(f"Welcome back, {row['full_name'] or row['username']}!", 'success')
-                return redirect(url_for('dashboard'))
+                return redirect(_after_login_url())
         except Exception as e:
             print(f"admin login lookup failed: {e}")
 
@@ -100,7 +132,7 @@ def login():
             session['logged_in'] = True
             session['admin'] = ADMIN_USERNAME
             flash('Welcome back, Admin!', 'success')
-            return redirect(url_for('dashboard'))
+            return redirect(_after_login_url())
 
         flash('Invalid credentials.', 'danger')
     return render_template('login.html')
@@ -462,7 +494,9 @@ def add_tablet():
 
 
 @app.route('/tablets/signout', methods=['GET', 'POST'])
+@login_required
 def tablet_signout():
+    admin = current_admin()
     with get_db() as conn:
         if request.method == 'POST':
             tablet_db_id = request.form.get('tablet_id')
@@ -484,16 +518,16 @@ def tablet_signout():
                 INSERT INTO tablet_transactions
                     (tablet_id, student_name, student_class, quantity,
                      duration_hours, sign_out_time, expected_return_time,
-                     took_charger, took_earphones, status)
-                VALUES (?,?,?,?,?,?,?,?,?,'Borrowed')
+                     took_charger, took_earphones, status, signed_out_by)
+                VALUES (?,?,?,?,?,?,?,?,?,'Borrowed',?)
             """, (tablet_db_id, student_name, student_class, quantity,
                   duration_hours, now.isoformat(), expected,
-                  took_charger, took_earphones))
+                  took_charger, took_earphones, admin))
 
             tab = conn.execute(
                 "SELECT tablet_id FROM tablets WHERE id=?", (tablet_db_id,)).fetchone()
             flash(
-                f'Tablet {tab["tablet_id"]} signed out to {student_name}. '
+                f'Tablet {tab["tablet_id"]} signed out to {student_name}, approved by {admin}. '
                 f'Expected return: {(now + timedelta(hours=duration_hours)).strftime("%I:%M %p")}',
                 'success')
             return redirect(url_for('tablet_signout'))
@@ -501,7 +535,7 @@ def tablet_signout():
         all_tablets = conn.execute("SELECT * FROM tablets WHERE is_active=1").fetchall()
         available = [t for t in all_tablets
                      if tablet_status(conn, t['id']) == 'Available']
-    return render_template('tablet_signout.html', tablets=available)
+    return render_template('tablet_signout.html', tablets=available, admin=admin)
 
 
 @app.route('/tablets/transactions')
@@ -530,17 +564,26 @@ def tablet_transactions():
 @app.route('/tablets/return/<int:tx_id>', methods=['POST'])
 @login_required
 def tablet_return(tx_id):
+    admin = current_admin()
     with get_db() as conn:
         tx = conn.execute(
-            "SELECT student_name FROM tablet_transactions WHERE id=?", (tx_id,)
+            "SELECT tt.student_name, tt.status, t.tablet_id AS tab_code "
+            "FROM tablet_transactions tt JOIN tablets t ON tt.tablet_id = t.id "
+            "WHERE tt.id=?", (tx_id,)
         ).fetchone()
         if not tx:
             flash('Transaction not found.', 'danger')
             return redirect(url_for('tablet_transactions'))
+        if tx['status'] != 'Borrowed':
+            flash(f"Tablet {tx['tab_code']} was already signed back in.", 'info')
+            return redirect(url_for('tablet_transactions'))
         conn.execute(
-            "UPDATE tablet_transactions SET status='Returned', sign_back_time=? WHERE id=?",
-            (datetime.utcnow().isoformat(), tx_id))
-    flash(f'Tablet returned by {tx["student_name"]}.', 'success')
+            "UPDATE tablet_transactions "
+            "SET status='Returned', sign_back_time=?, signed_back_by=? "
+            "WHERE id=? AND status='Borrowed'",
+            (datetime.utcnow().isoformat(), admin, tx_id))
+    flash(f"Tablet {tx['tab_code']} returned by {tx['student_name']}, "
+          f"signed in by {admin}.", 'success')
     return redirect(url_for('tablet_transactions'))
 
 
