@@ -9,13 +9,17 @@
 <div class="form-card">
   <div class="form-card-header">
     <i class="fas fa-info-circle"></i>
-    Fill in your details to borrow a tablet. The return time will be calculated automatically.
+    Enter the student's details to sign out a tablet. The return time is calculated automatically.
+  </div>
+  <div class="form-card-header" style="background:rgba(14,124,123,.08);border-color:rgba(14,124,123,.35);">
+    <i class="fas fa-user-shield"></i>
+    <span>This sign-out will be recorded as approved by <strong>{{ admin }}</strong>.</span>
   </div>
   <form method="POST" action="{{ url_for('tablet_signout') }}">
     <div class="form-row">
       <div class="form-group">
         <label>Student Name *</label>
-        <input type="text" name="student_name" class="form-control" placeholder="Your full name" required/>
+        <input type="text" name="student_name" class="form-control" placeholder="Student's full name" required/>
       </div>
       <div class="form-group">
         <label>Class *</label>
