@@ -9,7 +9,7 @@
 <div class="form-card">
   <div class="form-card-header">
     <i class="fas fa-info-circle"></i>
-    Enter the student's details to sign out a tablet. The return time is calculated automatically.
+    Enter the student's details and the time the tablet must be back. The sign-out time is recorded automatically.
   </div>
   <div class="form-card-header" style="background:rgba(14,124,123,.08);border-color:rgba(14,124,123,.35);">
     <i class="fas fa-user-shield"></i>
@@ -19,11 +19,11 @@
     <div class="form-row">
       <div class="form-group">
         <label>Student Name *</label>
-        <input type="text" name="student_name" class="form-control" placeholder="Student's full name" required/>
+        <input type="text" name="student_name" class="form-control" placeholder="Student's full name" value="{{ form.get('student_name', '') }}" required/>
       </div>
       <div class="form-group">
         <label>Class *</label>
-        <input type="text" name="student_class" class="form-control" placeholder="e.g. Grade 9A" required/>
+        <input type="text" name="student_class" class="form-control" placeholder="e.g. Grade 9A" value="{{ form.get('student_class', '') }}" required/>
       </div>
     </div>
 
@@ -33,7 +33,7 @@
         <select name="tablet_id" class="form-control" required>
           <option value="">-- Choose a tablet --</option>
           {% for tablet in tablets %}
-          <option value="{{ tablet['id'] }}">{{ tablet['tablet_id'] }} — {{ tablet['name'] or 'Tablet' }}</option>
+          <option value="{{ tablet['id'] }}" {{ 'selected' if form.get('tablet_id') == tablet['id']|string else '' }}>{{ tablet['tablet_id'] }} — {{ tablet['name'] or 'Tablet' }}</option>
           {% endfor %}
         </select>
         {% if not tablets %}
@@ -42,40 +42,41 @@
       </div>
       <div class="form-group">
         <label>Number of Tablets</label>
-        <input type="number" name="quantity" class="form-control" value="1" min="1" max="5"/>
+        <input type="number" name="quantity" class="form-control" value="{{ form.get('quantity', 1) }}" min="1" max="5"/>
       </div>
     </div>
 
     <div class="form-row">
       <div class="form-group">
-        <label>Duration *</label>
-        <select name="duration_hours" class="form-control" id="duration-select">
-          <option value="0.5">30 minutes</option>
-          <option value="1" selected>1 hour</option>
-          <option value="1.5">1.5 hours</option>
-          <option value="2">2 hours</option>
-          <option value="3">3 hours</option>
-          <option value="4">4 hours</option>
-          <option value="6">6 hours</option>
-          <option value="8">Full Day (8 hours)</option>
-        </select>
+        <label>Sign-Out Time</label>
+        <input type="text" class="form-control clock-field" id="signout-now" readonly
+               placeholder="Current time" tabindex="-1"/>
+        <span class="form-note">Current time. It is recorded automatically when you press Sign Out.</span>
       </div>
       <div class="form-group">
-        <label>Expected Return Time</label>
-        <input type="text" class="form-control" id="expected-return" readonly placeholder="Auto-calculated"/>
+        <label>Return Time *</label>
+        <input type="time" name="return_time" id="return-time" class="form-control"
+               value="{{ form.get('return_time', '') }}" required/>
+        <div class="quick-times">
+          <span>Quick set:</span>
+          <button type="button" data-add="30">+30 min</button>
+          <button type="button" data-add="60">+1 hour</button>
+          <button type="button" data-add="120">+2 hours</button>
+        </div>
+        <span class="form-note" id="return-hint">Type the time the tablet must be back today.</span>
       </div>
     </div>
 
     <div class="form-row checkbox-row">
       <div class="form-group checkbox-group">
         <label class="checkbox-label">
-          <input type="checkbox" name="took_charger"/>
+          <input type="checkbox" name="took_charger" {{ 'checked' if 'took_charger' in form else '' }}/>
           <i class="fas fa-plug"></i> Took a Charger
         </label>
       </div>
       <div class="form-group checkbox-group">
         <label class="checkbox-label">
-          <input type="checkbox" name="took_earphones"/>
+          <input type="checkbox" name="took_earphones" {{ 'checked' if 'took_earphones' in form else '' }}/>
           <i class="fas fa-headphones"></i> Took Earphones
         </label>
       </div>
@@ -89,15 +90,61 @@
   </form>
 </div>
 
-<script>
-function updateReturnTime() {
-  const dur = parseFloat(document.getElementById('duration-select').value);
-  const now = new Date();
-  const ret = new Date(now.getTime() + dur * 3600000);
-  document.getElementById('expected-return').value =
-    ret.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+<style>
+.clock-field { font-weight: 700; color: var(--navy); background: var(--navy-ghost, #eef1f8); letter-spacing: .3px; }
+.quick-times { display: flex; gap: .4rem; align-items: center; margin-top: .45rem; flex-wrap: wrap; font-size: .78rem; color: var(--ink-light); }
+.quick-times button {
+  border: 1.5px solid var(--ink-rule); background: var(--white); color: var(--navy);
+  border-radius: 999px; padding: .2rem .7rem; font-size: .78rem; font-weight: 600; cursor: pointer;
 }
-document.getElementById('duration-select').addEventListener('change', updateReturnTime);
-updateReturnTime();
+.quick-times button:hover { background: var(--navy); color: var(--white); border-color: var(--navy); }
+#return-hint.bad { color: var(--danger); font-weight: 600; }
+#return-hint.ok  { color: var(--green-dark, #0b7a47); font-weight: 600; }
+</style>
+
+<script>
+// The clock follows the SERVER's time in the school's time zone, so it is
+// correct even if this device's clock or time zone is wrong.
+const TZ = {{ tz_name | tojson }};
+const offset = {{ server_now_ms }} - Date.now();
+const nowEl = document.getElementById('signout-now');
+const retEl = document.getElementById('return-time');
+const hint  = document.getElementById('return-hint');
+
+function serverNow() { return new Date(Date.now() + offset); }
+function partsIn(d) {
+  const f = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const p = Object.fromEntries(f.formatToParts(d).map(x => [x.type, x.value]));
+  return { h: parseInt(p.hour, 10), m: parseInt(p.minute, 10) };
+}
+function pad(n) { return String(n).padStart(2, '0'); }
+function tick() {
+  nowEl.value = new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).format(serverNow());
+  checkReturn();
+}
+function checkReturn() {
+  if (!retEl.value) { hint.className = 'form-note'; hint.textContent = 'Type the time the tablet must be back today.'; return true; }
+  const n = partsIn(serverNow());
+  const [h, m] = retEl.value.split(':').map(Number);
+  const diff = (h * 60 + m) - (n.h * 60 + n.m);
+  if (diff <= 0) { hint.className = 'form-note bad'; hint.textContent = 'The return time must be later than the current time.'; return false; }
+  const hh = Math.floor(diff / 60), mm = diff % 60;
+  hint.className = 'form-note ok';
+  hint.textContent = 'Tablet is out for ' + (hh ? hh + ' h ' : '') + (mm ? mm + ' min' : '').trim();
+  return true;
+}
+document.querySelectorAll('.quick-times button').forEach(function (b) {
+  b.addEventListener('click', function () {
+    const t = new Date(serverNow().getTime() + parseInt(b.dataset.add, 10) * 60000);
+    const p = partsIn(t);
+    retEl.value = pad(p.h) + ':' + pad(p.m);
+    checkReturn();
+  });
+});
+retEl.addEventListener('input', checkReturn);
+document.querySelector('form[action$="signout"]').addEventListener('submit', function (e) {
+  if (!checkReturn() || !retEl.value) { e.preventDefault(); retEl.focus(); }
+});
+tick(); setInterval(tick, 1000);
 </script>
 {% endblock %}
