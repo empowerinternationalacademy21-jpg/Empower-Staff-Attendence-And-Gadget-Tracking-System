@@ -99,23 +99,25 @@ class Result:
 
 
 class Conn:
-    def execute(self, sql, params=()):
-        body = {
-            "requests": [
-                {"type": "execute",
-                 "stmt": {"sql": sql, "args": [_encode(p) for p in tuple(params)]}},
-                {"type": "close"},
-            ]
-        }
+    @staticmethod
+    def _post(requests_list):
         resp = _session.post(
             _http_url(),
-            json=body,
+            json={"requests": requests_list + [{"type": "close"}]},
             headers={"Authorization": "Bearer " + os.environ["TURSO_AUTH_TOKEN"]},
             timeout=REQUEST_TIMEOUT,
         )
         if resp.status_code != 200:
             raise RuntimeError(f"Turso HTTP {resp.status_code}: {resp.text[:300]}")
-        first = resp.json()["results"][0]
+        return resp.json()["results"]
+
+    @staticmethod
+    def _stmt(sql, params=()):
+        return {"type": "execute",
+                "stmt": {"sql": sql, "args": [_encode(p) for p in tuple(params)]}}
+
+    def execute(self, sql, params=()):
+        first = self._post([self._stmt(sql, params)])[0]
         if first.get("type") == "error":
             raise RuntimeError("Turso error: " + first["error"].get("message", "unknown"))
         res = first["response"]["result"]
@@ -125,6 +127,15 @@ class Conn:
         return Result(cols, rows,
                       int(lid) if lid not in (None, "") else None,
                       res.get("affected_row_count", 0))
+
+    def run_batch(self, statements):
+        """Send several statements in ONE request (fast: one round trip).
+        `statements` is a list of (sql, params). Each statement is atomic on
+        its own; an error in any statement is raised."""
+        results = self._post([self._stmt(sql, params) for sql, params in statements])
+        for r in results:
+            if r.get("type") == "error":
+                raise RuntimeError("Turso error: " + r["error"].get("message", "unknown"))
 
     def commit(self):  # statements are already committed individually
         pass
