@@ -145,6 +145,25 @@
   </div>
 </section>
 
+<!-- ── TEAM ACTIVITY ── -->
+<section class="section">
+  {% include '_activity_css.html' %}
+  <h2 class="section-title"><i class="fas fa-stream"></i> Team Activity</h2>
+  {% if team_activity %}
+  <div class="card">
+    <table class="data-table">
+      <thead><tr><th>When</th><th>Admin</th><th>Activity</th><th>Details</th></tr></thead>
+      <tbody>{% with rows = team_activity %}{% include '_activity_rows.html' %}{% endwith %}</tbody>
+    </table>
+  </div>
+  <div class="section-actions">
+    <a href="{{ url_for('activity') }}" class="btn btn-outline"><i class="fas fa-stream"></i> View all team activity</a>
+  </div>
+  {% else %}
+  <div class="empty-state small"><p>No team activity recorded yet.</p></div>
+  {% endif %}
+</section>
+
 <!-- ── RECENTLY RETURNED ── -->
 {% if recently_returned %}
 <section class="section">
