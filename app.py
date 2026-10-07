@@ -10,7 +10,9 @@ ADMIN_PASSWORD in the environment; it works even if the table is empty.
 """
 from flask import (Flask, render_template, request, redirect, url_for, flash,
                    session, jsonify, make_response, send_file)
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
+from zoneinfo import ZoneInfo
+import time as _time
 from functools import wraps
 import hmac
 import re
@@ -56,6 +58,78 @@ def _ensure_schema():
         _schema_ready = True
     except Exception as e:
         print(f"init_db retry failed: {e}")
+
+
+# ─────────────────────────────────────────────
+# TIME (the database stores UTC; the school works in local time)
+# ─────────────────────────────────────────────
+
+APP_TZ_NAME = os.environ.get('APP_TIMEZONE', 'Africa/Kampala')
+try:
+    APP_TZ = ZoneInfo(APP_TZ_NAME)
+except Exception:                      # tz database missing -> Uganda is UTC+3, no DST
+    APP_TZ_NAME = 'Africa/Kampala'
+    APP_TZ = timezone(timedelta(hours=3))
+
+
+def local_now():
+    return datetime.now(APP_TZ)
+
+
+def local_today():
+    return local_now().date()
+
+
+def to_local(value):
+    """Stored UTC value (ISO text or datetime) -> aware local datetime."""
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace(' ', 'T', 1) if ' ' in value else value)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(APP_TZ)
+
+
+def to_utc_iso(dt):
+    """Aware local datetime -> naive UTC ISO text (how the database stores it)."""
+    return dt.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
+
+
+# ─────────────────────────────────────────────
+# TEAM ACTIVITY LOG (visible to every admin)
+# ─────────────────────────────────────────────
+
+# action code -> (label, icon, colour class)
+ACTION_META = {
+    'login':           ('Logged in',            'fa-sign-in-alt',  'a-grey'),
+    'logout':          ('Logged out',           'fa-sign-out-alt', 'a-grey'),
+    'staff_add':       ('Added staff',          'fa-user-plus',    'a-green'),
+    'staff_edit':      ('Edited staff',         'fa-user-edit',    'a-blue'),
+    'staff_delete':    ('Removed staff',        'fa-user-minus',   'a-red'),
+    'tablet_register': ('Registered tablets',   'fa-plus-circle',  'a-green'),
+    'tablet_remove':   ('Removed tablet',       'fa-trash-alt',    'a-red'),
+    'tablet_signout':  ('Signed out tablet',    'fa-hand-holding', 'a-amber'),
+    'tablet_return':   ('Signed in tablet',     'fa-undo',         'a-teal'),
+    'report_pdf':      ('Downloaded report',    'fa-file-pdf',     'a-blue'),
+}
+
+
+def log_activity(action, details='', admin=None):
+    """Record what an admin did so the whole team can see it.
+    Never raises: a logging problem must not stop the real action."""
+    admin = admin or session.get('admin') or 'system'
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO activity_log (admin, action, details, created_at) "
+                "VALUES (?,?,?,?)",
+                (admin, action, (details or '')[:500], datetime.utcnow().isoformat()))
+    except Exception as e:
+        print(f"activity log failed: {e}")
+
+
+@app.context_processor
+def _inject_activity_meta():
+    return {'action_meta': ACTION_META}
 
 
 # ─────────────────────────────────────────────
@@ -122,6 +196,7 @@ def login():
                 session['logged_in'] = True
                 session['admin'] = row['username']
                 flash(f"Welcome back, {row['full_name'] or row['username']}!", 'success')
+                log_activity('login', 'Logged in', admin=row['username'])
                 return redirect(_after_login_url())
         except Exception as e:
             print(f"admin login lookup failed: {e}")
@@ -133,6 +208,7 @@ def login():
             session['logged_in'] = True
             session['admin'] = ADMIN_USERNAME
             flash('Welcome back, Admin!', 'success')
+            log_activity('login', 'Logged in (emergency login)', admin=ADMIN_USERNAME)
             return redirect(_after_login_url())
 
         flash('Invalid credentials.', 'danger')
@@ -141,6 +217,9 @@ def login():
 
 @app.route('/logout')
 def logout():
+    who = session.get('admin')
+    if who:
+        log_activity('logout', 'Logged out', admin=who)
     session.clear()
     flash('You have been logged out successfully.', 'info')
     response = make_response(redirect(url_for('index')))
@@ -157,7 +236,7 @@ def logout():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    today = date.today().isoformat()
+    today = local_today().isoformat()
     now = datetime.utcnow().isoformat()
     with get_db() as conn:
         total_staff = conn.execute(
@@ -193,7 +272,7 @@ def dashboard():
         """).fetchall()
 
         # ---- Data for the dashboard charts ----
-        since = (date.today() - timedelta(days=13)).isoformat()
+        since = (local_today() - timedelta(days=13)).isoformat()
         out_rows = conn.execute(
             "SELECT substr(sign_out_time,1,10) AS d, COUNT(*) AS c "
             "FROM tablet_transactions WHERE substr(sign_out_time,1,10) >= ? "
@@ -209,7 +288,7 @@ def dashboard():
 
     out_map = {r['d']: r['c'] for r in out_rows}
     back_map = {r['d']: r['c'] for r in back_rows}
-    days = [(date.today() - timedelta(days=i)) for i in range(13, -1, -1)]
+    days = [(local_today() - timedelta(days=i)) for i in range(13, -1, -1)]
     overdue_n = len(overdue)
     chart_data = {
         'tablet_status': {
@@ -235,8 +314,17 @@ def dashboard():
         },
     }
 
+    try:
+        with get_db() as conn:
+            team_activity = conn.execute(
+                "SELECT * FROM activity_log ORDER BY id DESC LIMIT 8").fetchall()
+    except Exception as e:
+        print(f"team activity unavailable: {e}")
+        team_activity = []
+
     return render_template('dashboard.html',
                            chart_data=chart_data,
+                           team_activity=team_activity,
                            total_staff=total_staff,
                            present_today=present_today,
                            absent_today=absent_today,
@@ -244,7 +332,7 @@ def dashboard():
                            borrowed_tablets=borrowed_count,
                            overdue_tablets=overdue,
                            recently_returned=recently_returned,
-                           today=date.today())
+                           today=local_today())
 
 
 # ─────────────────────────────────────────────
@@ -253,7 +341,7 @@ def dashboard():
 
 @app.route('/gate')
 def gate():
-    today = date.today().isoformat()
+    today = local_today().isoformat()
     with get_db() as conn:
         staff_list = conn.execute(
             "SELECT * FROM staff WHERE is_active=1 ORDER BY name").fetchall()
@@ -263,13 +351,13 @@ def gate():
     return render_template('gate.html',
                            staff_list=staff_list,
                            today_attendance=today_attendance,
-                           today=date.today())
+                           today=local_today())
 
 
 @app.route('/gate/mark', methods=['POST'])
 def mark_attendance():
     staff_id = request.form.get('staff_id')
-    today = date.today().isoformat()
+    today = local_today().isoformat()
     now_time = datetime.utcnow().strftime('%H:%M:%S')
     with get_db() as conn:
         existing = conn.execute(
@@ -320,6 +408,7 @@ def add_staff():
             conn.execute(
                 "INSERT INTO staff (name, email, phone, department) VALUES (?,?,?,?)",
                 (name, email, phone, dept))
+        log_activity('staff_add', f'Added staff member {name}' + (f' ({dept})' if dept else ''))
         flash(f'{name} added successfully!', 'success')
         return redirect(url_for('staff_list'))
     return render_template('add_staff.html')
@@ -338,6 +427,7 @@ def edit_staff(staff_id):
                 "UPDATE staff SET name=?, email=?, phone=?, department=? WHERE id=?",
                 (request.form.get('name'), request.form.get('email'),
                  request.form.get('phone'), request.form.get('department'), staff_id))
+            log_activity('staff_edit', f"Updated details of {request.form.get('name') or staff['name']}")
             flash('Staff details updated.', 'success')
             return redirect(url_for('staff_list'))
     return render_template('edit_staff.html', staff=staff)
@@ -355,6 +445,7 @@ def delete_staff(staff_id):
         conn.execute("UPDATE staff SET is_active=0 WHERE id=?", (staff_id,))
         # Remove attendance records so they no longer affect present/absent counts
         conn.execute("DELETE FROM attendance WHERE staff_id=?", (staff_id,))
+    log_activity('staff_delete', f'Removed staff member {s["name"]}')
     flash(f'{s["name"]} removed.', 'info')
     return redirect(url_for('staff_list'))
 
@@ -364,11 +455,11 @@ def delete_staff(staff_id):
 # ─────────────────────────────────────────────
 
 def _parse_date_arg():
-    value = request.args.get('date', date.today().isoformat())
+    value = request.args.get('date', local_today().isoformat())
     try:
         return date.fromisoformat(value)
     except ValueError:
-        return date.today()
+        return local_today()
 
 
 @app.route('/attendance/history')
@@ -539,6 +630,12 @@ def add_tablet():
             if duplicates:
                 flash(f'Already registered, skipped: {preview(duplicates)}', 'warning')
             if added or reactivated:
+                bits = []
+                if added:
+                    bits.append(f'Registered {len(added)} tablet(s): {preview(added)}')
+                if reactivated:
+                    bits.append(f'Restored: {preview(reactivated)}')
+                log_activity('tablet_register', '. '.join(bits))
                 return redirect(url_for('tablet_list'))
 
     with get_db() as conn:
@@ -553,46 +650,69 @@ def add_tablet():
 @app.route('/tablets/signout', methods=['GET', 'POST'])
 @login_required
 def tablet_signout():
+    """The logged-in admin signs a tablet out and types the return time."""
     admin = current_admin()
+    form = request.form if request.method == 'POST' else {}
+
     with get_db() as conn:
         if request.method == 'POST':
             tablet_db_id = request.form.get('tablet_id')
-            student_name = request.form.get('student_name')
-            student_class = request.form.get('student_class')
-            duration_hours = float(request.form.get('duration_hours', 1))
-            quantity = int(request.form.get('quantity', 1))
+            student_name = (request.form.get('student_name') or '').strip()
+            student_class = (request.form.get('student_class') or '').strip()
+            return_time = (request.form.get('return_time') or '').strip()
+            try:
+                quantity = max(1, min(int(request.form.get('quantity', 1)), 5))
+            except ValueError:
+                quantity = 1
             took_charger = 1 if 'took_charger' in request.form else 0
             took_earphones = 1 if 'took_earphones' in request.form else 0
 
-            if tablet_status(conn, tablet_db_id) == 'Borrowed':
-                flash('That tablet is currently borrowed. Choose another.', 'warning')
+            now_local = local_now()
+            ret_local, error = None, None
+            try:
+                hh, mm = (int(x) for x in return_time.split(':')[:2])
+                ret_local = now_local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            except (ValueError, TypeError):
+                error = 'Please enter a valid return time.'
+
+            if not error and not (tablet_db_id and student_name and student_class):
+                error = 'Please fill in the student name, class and tablet.'
+            if not error and ret_local <= now_local:
+                error = (f'The return time must be later than the current time '
+                         f'({now_local.strftime("%I:%M %p")}).')
+            if not error and tablet_status(conn, tablet_db_id) == 'Borrowed':
+                error = 'That tablet is currently borrowed. Choose another.'
+
+            if error:
+                flash(error, 'danger')      # the form is shown again with what was typed
+            else:
+                duration_hours = round((ret_local - now_local).total_seconds() / 3600, 2)
+                conn.execute("""
+                    INSERT INTO tablet_transactions
+                        (tablet_id, student_name, student_class, quantity,
+                         duration_hours, sign_out_time, expected_return_time,
+                         took_charger, took_earphones, status, signed_out_by)
+                    VALUES (?,?,?,?,?,?,?,?,?,'Borrowed',?)
+                """, (tablet_db_id, student_name, student_class, quantity,
+                      duration_hours, to_utc_iso(now_local), to_utc_iso(ret_local),
+                      took_charger, took_earphones, admin))
+
+                tab = conn.execute(
+                    "SELECT tablet_id FROM tablets WHERE id=?", (tablet_db_id,)).fetchone()
+                due = ret_local.strftime('%I:%M %p')
+                log_activity('tablet_signout',
+                             f'Signed out {tab["tablet_id"]} to {student_name} '
+                             f'({student_class}), due back at {due}')
+                flash(f'Tablet {tab["tablet_id"]} signed out to {student_name}, '
+                      f'approved by {admin}. Return by {due}.', 'success')
                 return redirect(url_for('tablet_signout'))
-
-            now = datetime.utcnow()
-            expected = (now + timedelta(hours=duration_hours)).isoformat()
-
-            conn.execute("""
-                INSERT INTO tablet_transactions
-                    (tablet_id, student_name, student_class, quantity,
-                     duration_hours, sign_out_time, expected_return_time,
-                     took_charger, took_earphones, status, signed_out_by)
-                VALUES (?,?,?,?,?,?,?,?,?,'Borrowed',?)
-            """, (tablet_db_id, student_name, student_class, quantity,
-                  duration_hours, now.isoformat(), expected,
-                  took_charger, took_earphones, admin))
-
-            tab = conn.execute(
-                "SELECT tablet_id FROM tablets WHERE id=?", (tablet_db_id,)).fetchone()
-            flash(
-                f'Tablet {tab["tablet_id"]} signed out to {student_name}, approved by {admin}. '
-                f'Expected return: {(now + timedelta(hours=duration_hours)).strftime("%I:%M %p")}',
-                'success')
-            return redirect(url_for('tablet_signout'))
 
         all_tablets = conn.execute("SELECT * FROM tablets WHERE is_active=1").fetchall()
         available = [t for t in all_tablets
                      if tablet_status(conn, t['id']) == 'Available']
-    return render_template('tablet_signout.html', tablets=available, admin=admin)
+    return render_template('tablet_signout.html', tablets=available, admin=admin,
+                           form=form, server_now_ms=int(_time.time() * 1000),
+                           tz_name=APP_TZ_NAME)
 
 
 @app.route('/tablets/transactions')
@@ -624,7 +744,7 @@ def tablet_return(tx_id):
     admin = current_admin()
     with get_db() as conn:
         tx = conn.execute(
-            "SELECT tt.student_name, tt.status, t.tablet_id AS tab_code "
+            "SELECT tt.student_name, tt.status, tt.signed_out_by, t.tablet_id AS tab_code "
             "FROM tablet_transactions tt JOIN tablets t ON tt.tablet_id = t.id "
             "WHERE tt.id=?", (tx_id,)
         ).fetchone()
@@ -639,6 +759,9 @@ def tablet_return(tx_id):
             "SET status='Returned', sign_back_time=?, signed_back_by=? "
             "WHERE id=? AND status='Borrowed'",
             (datetime.utcnow().isoformat(), admin, tx_id))
+    log_activity('tablet_return',
+                 f"Signed in {tx['tab_code']} from {tx['student_name']}"
+                 + (f" (signed out by {tx['signed_out_by']})" if tx['signed_out_by'] else ''))
     flash(f"Tablet {tx['tab_code']} returned by {tx['student_name']}, "
           f"signed in by {admin}.", 'success')
     return redirect(url_for('tablet_transactions'))
@@ -664,6 +787,7 @@ def delete_tablet(tablet_id):
 
         # Soft delete — preserves transaction history (foreign key safe)
         conn.execute("UPDATE tablets SET is_active=0 WHERE id=?", (tablet_id,))
+    log_activity('tablet_remove', f'Removed tablet {tablet["tablet_id"]} (damaged / lost)')
     flash(f'Tablet {tablet["tablet_id"]} has been removed from the system.', 'success')
     return redirect(url_for('tablet_list'))
 
@@ -676,6 +800,7 @@ def delete_tablet(tablet_id):
 @login_required
 def attendance_pdf():
     selected_date = _parse_date_arg()
+    log_activity('report_pdf', f'Downloaded the attendance report for {selected_date.strftime("%d %b %Y")}')
 
     with get_db() as conn:
         all_staff = conn.execute(
@@ -720,15 +845,10 @@ def attendance_pdf():
     n_pres = len(present_list)
     n_abs = len(absent_list)
     pct = int(n_pres / total * 100) if total else 0
-    gen_str = datetime.now().strftime('%d %b %Y • %I:%M %p')
+    gen_str = local_now().strftime('%d %b %Y • %I:%M %p')
 
     def time_fmt(t):
-        if not t:
-            return '—'
-        try:
-            return datetime.strptime(t, '%H:%M:%S').strftime('%I:%M %p')
-        except Exception:
-            return t
+        return fmt_time(t)
 
     def make_avatar(initial, bg, fg=WHITE, size=6.5 * mm):
         d = Drawing(size, size)
@@ -973,7 +1093,7 @@ def attendance_pdf():
 @login_required
 def attendance_monthly():
     """Shows a 12-month summary of attendance records."""
-    today = date.today()
+    today = local_today()
     # Go back 11 full months + current month
     start_date = (today.replace(day=1) - timedelta(days=335)).replace(day=1)
 
@@ -1007,6 +1127,55 @@ def attendance_monthly():
 
 
 # ─────────────────────────────────────────────
+# TEAM ACTIVITY (every admin sees what every other admin did)
+# ─────────────────────────────────────────────
+
+ACTIVITY_PER_PAGE = 40
+
+
+@app.route('/activity')
+@login_required
+def activity():
+    who = (request.args.get('admin') or '').strip()
+    what = (request.args.get('action') or '').strip()
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        page = 1
+
+    where, params = [], []
+    if who:
+        where.append("admin = ?")
+        params.append(who)
+    if what in ACTION_META:
+        where.append("action = ?")
+        params.append(what)
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+
+    midnight = datetime.combine(local_today(), datetime.min.time(), tzinfo=APP_TZ)
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM activity_log {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [ACTIVITY_PER_PAGE + 1, (page - 1) * ACTIVITY_PER_PAGE]).fetchall()
+        if request.args.get('partial'):
+            return render_template('_activity_rows.html', rows=rows[:ACTIVITY_PER_PAGE])
+        names = {r['username'] for r in conn.execute(
+            "SELECT username FROM admins WHERE is_active=1").fetchall()}
+        names |= {r['admin'] for r in conn.execute(
+            "SELECT DISTINCT admin FROM activity_log").fetchall()}
+        today_counts = conn.execute(
+            "SELECT admin, COUNT(*) AS c FROM activity_log WHERE created_at >= ? "
+            "AND action NOT IN ('login','logout') GROUP BY admin ORDER BY c DESC",
+            (to_utc_iso(midnight),)).fetchall()
+
+    return render_template('activity.html',
+                           rows=rows[:ACTIVITY_PER_PAGE],
+                           has_more=len(rows) > ACTIVITY_PER_PAGE, page=page,
+                           admins=sorted(names), f_admin=who, f_action=what,
+                           today_counts=today_counts)
+
+
+# ─────────────────────────────────────────────
 # API: Overdue JSON
 # ─────────────────────────────────────────────
 
@@ -1025,7 +1194,7 @@ def api_overdue():
         'id': r['id'],
         'tablet': r['tab_code'],
         'student': r['student_name'],
-        'expected': datetime.fromisoformat(r['expected_return_time']).strftime('%I:%M %p')
+        'expected': fmt_dt_time(r['expected_return_time'])
     } for r in rows]
     return jsonify(data)
 
@@ -1036,10 +1205,13 @@ def api_overdue():
 
 @app.template_filter('fmt_time')
 def fmt_time(value):
+    """Attendance time-in (stored as UTC HH:MM:SS) -> local 12-hour time."""
     if not value:
         return '—'
     try:
-        return datetime.strptime(value, '%H:%M:%S').strftime('%I:%M %p')
+        t = datetime.strptime(value, '%H:%M:%S').time()
+        utc_dt = datetime.combine(datetime.now(timezone.utc).date(), t, tzinfo=timezone.utc)
+        return utc_dt.astimezone(APP_TZ).strftime('%I:%M %p')
     except Exception:
         return value
 
@@ -1049,7 +1221,7 @@ def fmt_dt(value):
     if not value:
         return '—'
     try:
-        return datetime.fromisoformat(value).strftime('%d %b %H:%M')
+        return to_local(value).strftime('%d %b %H:%M')
     except Exception:
         return value
 
@@ -1059,9 +1231,59 @@ def fmt_dt_time(value):
     if not value:
         return '—'
     try:
-        return datetime.fromisoformat(value).strftime('%I:%M %p')
+        return to_local(value).strftime('%I:%M %p')
     except Exception:
         return value
+
+
+@app.template_filter('fmt_dt_full')
+def fmt_dt_full(value):
+    if not value:
+        return '—'
+    try:
+        return to_local(value).strftime('%a %d %b %Y, %I:%M %p')
+    except Exception:
+        return value
+
+
+@app.template_filter('ago')
+def ago(value):
+    """'just now', '5 min ago', '3 h ago', or the date for older entries."""
+    if not value:
+        return ''
+    try:
+        secs = (datetime.now(timezone.utc) - to_local(value).astimezone(timezone.utc)).total_seconds()
+        if secs < 60:
+            return 'just now'
+        if secs < 3600:
+            return f'{int(secs // 60)} min ago'
+        if secs < 86400:
+            return f'{int(secs // 3600)} h ago'
+        return to_local(value).strftime('%d %b')
+    except Exception:
+        return ''
+
+
+@app.template_filter('initials')
+def initials(name):
+    """'A.Enid' -> 'AE', 'Mr.Osojo' -> 'MO', 'Academicminister' -> 'AC'."""
+    parts = [p for p in re.split(r'[^A-Za-z]+', name or '') if p]
+    if len(parts) >= 2:
+        return (parts[0][0] + parts[1][0]).upper()
+    return (parts[0][:2] if parts else '?').upper()
+
+
+@app.template_filter('fmt_duration')
+def fmt_duration(hours):
+    """2.5 -> '2 h 30 min'."""
+    try:
+        total = int(round(float(hours) * 60))
+    except (TypeError, ValueError):
+        return '—'
+    h, m = divmod(total, 60)
+    if h and m:
+        return f'{h} h {m} min'
+    return f'{h} h' if h else f'{m} min'
 
 
 # ─────────────────────────────────────────────
