@@ -79,7 +79,7 @@
           <td><i class="fas fa-user-shield"></i> {{ tx['signed_out_by'] or '—' }}</td>
           <td>{{ tx['sign_back_time']|fmt_dt }}</td>
           <td><i class="fas fa-user-check"></i> {{ tx['signed_back_by'] or '—' }}</td>
-          <td>{{ tx['duration_hours'] }}h</td>
+          <td>{{ tx['duration_hours']|fmt_duration }}</td>
           <td>
             {% if tx['took_charger'] %}<i class="fas fa-plug" title="Charger"></i> {% endif %}
             {% if tx['took_earphones'] %}<i class="fas fa-headphones" title="Earphones"></i>{% endif %}
