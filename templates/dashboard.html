@@ -46,34 +46,35 @@
     <div class="stat-card stat-blue">
       <div class="stat-icon"><i class="fas fa-tablet-alt"></i></div>
       <div class="stat-info">
-        <span class="stat-number">{{ total_tablets }}</span>
+        <span class="stat-number" data-live="total">{{ total_tablets }}</span>
         <span class="stat-label">Total Tablets</span>
       </div>
     </div>
     <div class="stat-card stat-green">
       <div class="stat-icon"><i class="fas fa-warehouse"></i></div>
       <div class="stat-info">
-        <span class="stat-number">{{ in_storage }}</span>
+        <span class="stat-number" data-live="in_storage">{{ in_storage }}</span>
         <span class="stat-label">In Storage</span>
       </div>
     </div>
     <div class="stat-card stat-yellow">
       <div class="stat-icon"><i class="fas fa-hand-holding"></i></div>
       <div class="stat-info">
-        <span class="stat-number">{{ borrowed_tablets }}</span>
+        <span class="stat-number" data-live="borrowed">{{ borrowed_tablets }}</span>
         <span class="stat-label">Currently Borrowed</span>
       </div>
     </div>
     <div class="stat-card stat-red">
       <div class="stat-icon"><i class="fas fa-exclamation-triangle"></i></div>
       <div class="stat-info">
-        <span class="stat-number">{{ overdue_tablets|length }}</span>
+        <span class="stat-number" data-live="overdue">{{ overdue_tablets|length }}</span>
         <span class="stat-label">Overdue</span>
       </div>
     </div>
   </div>
 
-  <!-- Overdue Alert -->
+  <!-- Overdue Alert (refreshed live by the script at the bottom of this page) -->
+  <div id="overdue-live">
   {% if overdue_tablets %}
   <div class="alert alert-danger overdue-list">
     <h4><i class="fas fa-bell"></i> Overdue Tablets!</h4>
@@ -87,6 +88,7 @@
     {% endfor %}
   </div>
   {% endif %}
+  </div>
 
   <div class="section-actions">
     <a href="{{ url_for('tablet_transactions') }}" class="btn btn-primary"><i class="fas fa-list"></i> View All Transactions</a>
@@ -305,8 +307,8 @@
 
   function doughnut(id, emptyId, block, colors, centerLabel) {
     var ctx = show(id, emptyId, sum(block.values) > 0);
-    if (!ctx) return;
-    new Chart(ctx, {
+    if (!ctx) return null;
+    return new Chart(ctx, {
       type: 'doughnut',
       data: {
         labels: block.labels,
@@ -359,7 +361,7 @@
   }
 
   // 1) Tablet status doughnut
-  doughnut('chartTabletStatus', 'emptyTabletStatus', D.tablet_status,
+  window.__tabletChart = doughnut('chartTabletStatus', 'emptyTabletStatus', D.tablet_status,
            [GREEN, AMBER, RED], 'Tablets');
 
   // 2) Sign-outs vs returns (last 14 days)
@@ -429,6 +431,78 @@
 
   // 4) Staff attendance doughnut
   doughnut('chartStaff', 'emptyStaff', D.staff, [GREEN, RED], 'Staff');
+})();
+</script>
+
+<style>
+  @keyframes liveFlash {
+    0%   { box-shadow: 0 0 0 0 rgba(214,48,65,.55); }
+    100% { box-shadow: 0 0 0 18px rgba(214,48,65,0); }
+  }
+  .flash-new { animation: liveFlash 1.2s ease-out 2; }
+</style>
+
+<script>
+// Live updates: the tablet numbers, the overdue list and the status chart
+// refresh automatically (main.js sends a 'tablet-status' event every few seconds).
+(function () {
+  var lastOverdueIds = null;
+
+  function esc(v) {
+    var d = document.createElement('div');
+    d.textContent = (v === null || v === undefined) ? '' : String(v);
+    return d.innerHTML;
+  }
+
+  function setNumber(key, value) {
+    var el = document.querySelector('[data-live="' + key + '"]');
+    if (el && el.textContent !== String(value)) el.textContent = value;
+  }
+
+  function renderOverdueList(list) {
+    var box = document.getElementById('overdue-live');
+    if (!box) return;
+    if (!list.length) { box.innerHTML = ''; return; }
+    var html = '<div class="alert alert-danger overdue-list">' +
+      '<h4><i class="fas fa-bell"></i> Overdue Tablets!</h4>';
+    list.forEach(function (t) {
+      html += '<div class="overdue-item"><i class="fas fa-tablet-alt"></i> ' +
+        '<strong>' + esc(t.tablet) + '</strong> \u2014 Borrowed by <strong>' + esc(t.student) +
+        '</strong> (' + esc(t['class']) + ') \u2014 Expected: ' + esc(t.expected) +
+        (t.by ? ' \u2014 Signed out by <strong>' + esc(t.by) + '</strong>' : '') + '</div>';
+    });
+    box.innerHTML = html + '</div>';
+  }
+
+  document.addEventListener('tablet-status', function (e) {
+    var d = e.detail, c = d.counts;
+    setNumber('total', c.total);
+    setNumber('in_storage', c.in_storage);
+    setNumber('borrowed', c.borrowed);
+    setNumber('overdue', c.overdue);
+    renderOverdueList(d.overdue);
+
+    // Pulse the Overdue card when a NEW tablet becomes overdue
+    var ids = d.overdue.map(function (t) { return t.id; });
+    if (lastOverdueIds !== null) {
+      var isNew = ids.some(function (id) { return lastOverdueIds.indexOf(id) === -1; });
+      var num = document.querySelector('[data-live="overdue"]');
+      var card = num && num.closest('.stat-card');
+      if (isNew && card) {
+        card.classList.remove('flash-new'); void card.offsetWidth;
+        card.classList.add('flash-new');
+      }
+    }
+    lastOverdueIds = ids;
+
+    // Update the tablet status doughnut without reloading
+    var ch = window.__tabletChart;
+    if (ch) {
+      ch.data.datasets[0].data = d.chart;
+      ch.options.plugins.centerText.text = c.total;
+      ch.update();
+    }
+  });
 })();
 </script>
 
