@@ -1,0 +1,11 @@
+{% for ev in rows %}
+{% set m = action_meta.get(ev['action'], [ev['action'], 'fa-circle', 'a-grey']) %}
+<tr>
+  <td class="when"><b>{{ ev['created_at']|ago }}</b><small>{{ ev['created_at']|fmt_dt_full }}</small></td>
+  <td><span class="who"><span class="av">{{ ev['admin']|initials }}</span>{{ ev['admin'] }}</span></td>
+  <td><span class="act-badge {{ m[2] }}"><i class="fas {{ m[1] }}"></i> {{ m[0] }}</span></td>
+  <td class="act-details">{{ ev['details'] or '—' }}</td>
+</tr>
+{% else %}
+<tr><td colspan="4" style="text-align:center;padding:2rem;color:var(--ink-light)">No activity found.</td></tr>
+{% endfor %}

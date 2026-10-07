@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+{% block title %}Team Activity - EIA System{% endblock %}
+{% block content %}
+{% include '_activity_css.html' %}
+
+<div class="page-header">
+  <h1><i class="fas fa-stream"></i> Team Activity</h1>
+  <span class="live-pill" id="live-pill"><i class="fas fa-circle"></i> Live &middot; <span id="live-time">just now</span></span>
+</div>
+
+<p class="act-intro">Everything the admins do in the system is recorded here, so the whole team can see who did what and when.</p>
+
+{% if today_counts %}
+<div class="today-strip">
+  <span class="today-label">Today</span>
+  {% for r in today_counts %}
+  <a class="today-chip" href="{{ url_for('activity', admin=r['admin']) }}">
+    <span class="who"><span class="av">{{ r['admin']|initials }}</span>{{ r['admin'] }}</span>
+    <b>{{ r['c'] }}</b> action{{ '' if r['c'] == 1 else 's' }}
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+<form method="GET" action="{{ url_for('activity') }}" class="act-filters" id="act-filters">
+  <div class="form-group">
+    <label>Admin</label>
+    <select name="admin" class="form-control" onchange="this.form.submit()">
+      <option value="">All admins</option>
+      {% for a in admins %}<option value="{{ a }}" {{ 'selected' if a == f_admin else '' }}>{{ a }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="form-group">
+    <label>Activity</label>
+    <select name="action" class="form-control" onchange="this.form.submit()">
+      <option value="">All activity</option>
+      {% for code, m in action_meta.items() %}<option value="{{ code }}" {{ 'selected' if code == f_action else '' }}>{{ m[0] }}</option>{% endfor %}
+    </select>
+  </div>
+  {% if f_admin or f_action %}
+  <a href="{{ url_for('activity') }}" class="btn btn-outline" style="align-self:flex-end">Clear filters</a>
+  {% endif %}
+</form>
+
+<div class="card">
+  <table class="data-table">
+    <thead><tr><th>When</th><th>Admin</th><th>Activity</th><th>Details</th></tr></thead>
+    <tbody id="act-body">{% include '_activity_rows.html' %}</tbody>
+  </table>
+</div>
+
+<div class="act-pager">
+  {% if page > 1 %}
+  <a class="btn btn-outline" href="{{ url_for('activity', admin=f_admin, action=f_action, page=page-1) }}"><i class="fas fa-arrow-left"></i> Newer</a>
+  {% endif %}
+  {% if has_more %}
+  <a class="btn btn-outline" href="{{ url_for('activity', admin=f_admin, action=f_action, page=page+1) }}">Older <i class="fas fa-arrow-right"></i></a>
+  {% endif %}
+</div>
+
+<style>
+.act-intro { color: var(--ink-light); margin: -.4rem 0 1.2rem; font-size: .92rem; }
+.live-pill { display: inline-flex; align-items: center; gap: .45rem; font-size: .8rem; font-weight: 700; color: #0b7a47; background: #e6f7ee; border: 1.5px solid rgba(15,158,94,.25); padding: .35rem .85rem; border-radius: 999px; }
+.live-pill i { font-size: .5rem; animation: livePulse 1.6s infinite; }
+@keyframes livePulse { 50% { opacity: .25; } }
+.today-strip { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: 1.2rem; }
+.today-label { font-size: .72rem; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: var(--ink-ghost); }
+.today-chip { display: inline-flex; align-items: center; gap: .6rem; background: var(--white); border: 1.5px solid var(--ink-rule); border-radius: 999px; padding: .3rem .9rem .3rem .35rem; font-size: .82rem; color: var(--ink-mid); text-decoration: none; }
+.today-chip:hover { border-color: var(--navy); }
+.today-chip b { color: var(--navy); }
+.act-filters { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.2rem; }
+.act-filters .form-group { min-width: 200px; margin: 0; }
+.act-pager { display: flex; gap: .7rem; justify-content: center; margin: 1.4rem 0; }
+</style>
+
+<script>
+// Keep the feed live: refresh the first page every 15 seconds.
+(function () {
+  if ({{ page }} !== 1) { document.getElementById('live-pill').style.display = 'none'; return; }
+  const body = document.getElementById('act-body');
+  const label = document.getElementById('live-time');
+  let last = Date.now();
+  async function refresh() {
+    try {
+      const qs = new URLSearchParams(window.location.search); qs.set('partial', '1');
+      const r = await fetch('{{ url_for("activity") }}?' + qs.toString(), { credentials: 'same-origin' });
+      if (r.ok && !r.redirected) { body.innerHTML = await r.text(); last = Date.now(); }
+    } catch (e) { /* offline: keep what is shown */ }
+  }
+  setInterval(refresh, 15000);
+  setInterval(function () {
+    const s = Math.round((Date.now() - last) / 1000);
+    label.textContent = s < 5 ? 'just now' : 'updated ' + s + 's ago';
+  }, 1000);
+})();
+</script>
+{% endblock %}
