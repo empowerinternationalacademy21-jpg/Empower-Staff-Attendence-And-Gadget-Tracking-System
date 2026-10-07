@@ -330,6 +330,7 @@ def dashboard():
                            absent_today=absent_today,
                            total_tablets=total_tablets,
                            borrowed_tablets=borrowed_count,
+                           in_storage=max(total_tablets - borrowed_count, 0),
                            overdue_tablets=overdue,
                            recently_returned=recently_returned,
                            today=local_today())
@@ -1179,24 +1180,69 @@ def activity():
 # API: Overdue JSON
 # ─────────────────────────────────────────────
 
-@app.route('/api/overdue')
-def api_overdue():
-    now = datetime.utcnow().isoformat()
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT tt.id, tt.student_name, tt.expected_return_time, t.tablet_id AS tab_code
-            FROM tablet_transactions tt
-            JOIN tablets t ON tt.tablet_id = t.id
-            WHERE tt.status='Borrowed' AND tt.expected_return_time < ?
-        """, (now,)).fetchall()
+def _api_admin_ok():
+    """The JSON APIs contain student names: logged-in admins only."""
+    return bool(session.get('logged_in') and session.get('admin'))
 
-    data = [{
+
+def _overdue_rows(conn):
+    now = datetime.utcnow().isoformat()
+    return conn.execute("""
+        SELECT tt.id, tt.student_name, tt.student_class, tt.expected_return_time,
+               tt.signed_out_by, t.tablet_id AS tab_code
+        FROM tablet_transactions tt
+        JOIN tablets t ON tt.tablet_id = t.id
+        WHERE tt.status='Borrowed' AND tt.expected_return_time < ?
+        ORDER BY tt.expected_return_time
+    """, (now,)).fetchall()
+
+
+def _overdue_payload(rows):
+    return [{
         'id': r['id'],
         'tablet': r['tab_code'],
         'student': r['student_name'],
+        'class': r['student_class'] or '',
+        'by': r['signed_out_by'] or '',
         'expected': fmt_dt_time(r['expected_return_time'])
     } for r in rows]
-    return jsonify(data)
+
+
+@app.route('/api/overdue')
+def api_overdue():
+    if not _api_admin_ok():
+        return jsonify({'error': 'login required'}), 401
+    with get_db() as conn:
+        rows = _overdue_rows(conn)
+    return jsonify(_overdue_payload(rows))
+
+
+@app.route('/api/tablet-status')
+def api_tablet_status():
+    """Live tablet numbers + overdue list. Polled every few seconds by main.js
+    so the banner and dashboard update without a page reload."""
+    if not _api_admin_ok():
+        return jsonify({'error': 'login required'}), 401
+    with get_db() as conn:
+        c = conn.execute(
+            "SELECT (SELECT COUNT(*) FROM tablets WHERE is_active=1) AS total, "
+            "(SELECT COUNT(*) FROM tablet_transactions WHERE status='Borrowed') AS borrowed"
+        ).fetchone()
+        rows = _overdue_rows(conn)
+    total, borrowed, overdue_n = c['total'], c['borrowed'], len(rows)
+    resp = jsonify({
+        'counts': {
+            'total': total,
+            'in_storage': max(total - borrowed, 0),
+            'borrowed': borrowed,
+            'overdue': overdue_n,
+        },
+        # same maths as the dashboard's Tablet Status chart
+        'chart': [max(total - borrowed, 0), max(borrowed - overdue_n, 0), overdue_n],
+        'overdue': _overdue_payload(rows),
+    })
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 # ─────────────────────────────────────────────
