@@ -13,6 +13,7 @@ from flask import (Flask, render_template, request, redirect, url_for, flash,
 from datetime import datetime, date, timedelta
 from functools import wraps
 import hmac
+import re
 import os
 import io
 
@@ -409,88 +410,144 @@ def tablet_list():
     return render_template('tablet_list.html', tablets=tablets)
 
 
+# All school tablets share one prefix; each tablet has its own code number.
+TABLET_PREFIX = (os.environ.get('TABLET_PREFIX') or 'MFL').strip().upper()
+MAX_TABLET_BATCH = 200
+
+
+def parse_tablet_codes(raw):
+    """Turn text like '1045, 1050, 1060-1065' into (codes, unreadable_parts).
+
+    * numbers separated by commas, spaces or new lines
+    * ranges with a dash: 1060-1065 (a leading zero is kept: 001-003)
+    * the prefix may be typed too: MFL-1045 is read as 1045
+    """
+    text = re.sub(rf'(?i){re.escape(TABLET_PREFIX)}[\s_-]*', '', raw or '')
+    text = re.sub(r'\s*[-\u2013\u2014]\s*', '-', text)
+    codes, bad, seen = [], [], set()
+
+    def add(code):
+        n = int(code)
+        if n not in seen:
+            seen.add(n)
+            codes.append(code)
+
+    for tok in re.split(r'[,;\s]+', text):
+        if not tok:
+            continue
+        m = re.fullmatch(r'(\d{1,6})-(\d{1,6})', tok)
+        if m:
+            lo, hi = int(m.group(1)), int(m.group(2))
+            if lo > hi or hi - lo + 1 > MAX_TABLET_BATCH:
+                bad.append(tok)
+                continue
+            width = len(m.group(1)) if m.group(1).startswith('0') else 0
+            for n in range(lo, hi + 1):
+                add(str(n).zfill(width))
+        elif re.fullmatch(r'\d{1,6}', tok):
+            add(tok)
+        else:
+            bad.append(tok)
+    return codes, bad
+
+
+def _tablet_form_context(conn):
+    """Numbers already registered under the MFL prefix (for the live preview)."""
+    rows = conn.execute(
+        "SELECT tablet_id, is_active FROM tablets WHERE tablet_id LIKE ?",
+        (f'{TABLET_PREFIX}-%',)).fetchall()
+    used, inactive = [], []
+    for r in rows:
+        suffix = r['tablet_id'][len(TABLET_PREFIX) + 1:]
+        if suffix.isdigit():
+            (used if r['is_active'] else inactive).append(int(suffix))
+    count = conn.execute("SELECT COUNT(*) FROM tablets WHERE is_active=1").fetchone()[0]
+    return count, used, inactive
+
+
 @app.route('/tablets/add', methods=['GET', 'POST'])
 @login_required
 def add_tablet():
+    form_codes, form_device = '', ''
+
     if request.method == 'POST':
-        prefix = request.form.get('prefix', 'TAB').strip().upper()
-        device = request.form.get('device_name', '').strip()
-        try:
-            quantity = max(1, min(int(request.form.get('quantity', 1)), 100))
-        except ValueError:
-            quantity = 1
+        form_codes = request.form.get('codes', '')
+        form_device = (request.form.get('device_name') or '').strip()[:60]
+        codes, bad = parse_tablet_codes(form_codes)
 
-        with get_db() as conn:
-            # Check ALL rows (active + inactive) to avoid the UNIQUE constraint on tablet_id
-            rows = conn.execute(
-                "SELECT tablet_id, is_active FROM tablets WHERE tablet_id LIKE ?",
-                (f'{prefix}-%',)
-            ).fetchall()
+        if bad:
+            flash('Could not read: ' + ', '.join(bad[:8]) +
+                  '. Use numbers like 1045, or ranges like 1060-1065.', 'warning')
+        if not codes:
+            flash('Enter at least one tablet code number.', 'danger')
+        elif len(codes) > MAX_TABLET_BATCH:
+            flash(f'Please register at most {MAX_TABLET_BATCH} tablets at a time.', 'danger')
+        else:
+            name = form_device or 'Tablet'
+            added, reactivated, duplicates = [], [], []
+            try:
+                with get_db() as conn:
+                    rows = conn.execute(
+                        "SELECT id, tablet_id, is_active FROM tablets WHERE tablet_id LIKE ?",
+                        (f'{TABLET_PREFIX}-%',)).fetchall()
+                    existing = {}
+                    for r in rows:
+                        suffix = r['tablet_id'][len(TABLET_PREFIX) + 1:]
+                        if suffix.isdigit():
+                            existing[int(suffix)] = r
 
-            active_nums = set()   # numbers currently in use (block these)
-            inactive_tids = {}    # tablet_id -> number, soft-deleted rows we can reactivate
-            for r in rows:
-                parts = r['tablet_id'].split('-')
-                if len(parts) >= 2:
-                    try:
-                        num = int(parts[-1])
-                        if r['is_active']:
-                            active_nums.add(num)
-                        else:
-                            inactive_tids[r['tablet_id']] = num
-                    except ValueError:
-                        pass
+                    new_rows, back_ids = [], []
+                    for code in codes:
+                        ex = existing.get(int(code))
+                        if ex is None:
+                            new_rows.append((f'{TABLET_PREFIX}-{code}', name))
+                            added.append(f'{TABLET_PREFIX}-{code}')
+                        elif ex['is_active']:
+                            duplicates.append(ex['tablet_id'])
+                        else:   # previously removed tablet: bring it back
+                            back_ids.append(ex['id'])
+                            reactivated.append(ex['tablet_id'])
 
-            # Fill gaps from 1, skipping numbers already active
-            added = []
-            counter = 1
-            while len(added) < quantity:
-                if counter > 9999:
-                    break
-                if counter not in active_nums:
-                    tid = f"{prefix}-{str(counter).zfill(2)}"
-                    name = f"{device} {str(counter).zfill(2)}" if device else tid
-                    if tid in inactive_tids:
-                        # Reactivate the soft-deleted row instead of inserting
-                        conn.execute(
-                            "UPDATE tablets SET is_active=1, name=? WHERE tablet_id=?",
-                            (name, tid))
-                    else:
-                        conn.execute(
-                            "INSERT INTO tablets (tablet_id, name) VALUES (?,?)",
-                            (tid, name))
-                    added.append(tid)
-                    active_nums.add(counter)
-                counter += 1
+                    statements = []
+                    if new_rows:   # one INSERT for every new tablet (atomic)
+                        marks = ','.join(['(?,?)'] * len(new_rows))
+                        statements.append((
+                            f"INSERT INTO tablets (tablet_id, name) VALUES {marks}",
+                            [v for row in new_rows for v in row]))
+                    if back_ids:
+                        marks = ','.join('?' * len(back_ids))
+                        statements.append((
+                            f"UPDATE tablets SET is_active=1, name=? WHERE id IN ({marks})",
+                            [name] + back_ids))
+                    if statements:
+                        conn.run_batch(statements)   # one request to the database
+            except Exception as e:
+                print(f"tablet registration failed: {e}")
+                flash('Could not save the tablets. Nothing was registered - '
+                      'please try again.', 'danger')
+                added = reactivated = []
+                duplicates = []
+                codes = []
 
-        if added:
-            flash(
-                f"{len(added)} tablet(s) registered: {added[0]}"
-                + (f" → {added[-1]}" if len(added) > 1 else ""),
-                'success')
-        return redirect(url_for('tablet_list'))
+            def preview(items):
+                return ', '.join(items[:8]) + (f' and {len(items) - 8} more' if len(items) > 8 else '')
+
+            if added:
+                flash(f'{len(added)} tablet(s) registered: {preview(added)}', 'success')
+            if reactivated:
+                flash(f'Restored previously removed tablet(s): {preview(reactivated)}', 'info')
+            if duplicates:
+                flash(f'Already registered, skipped: {preview(duplicates)}', 'warning')
+            if added or reactivated:
+                return redirect(url_for('tablet_list'))
 
     with get_db() as conn:
-        tablet_count = conn.execute(
-            "SELECT COUNT(*) FROM tablets WHERE is_active=1").fetchone()[0]
-        active_rows = conn.execute(
-            "SELECT tablet_id FROM tablets WHERE is_active=1").fetchall()
-
-    # Build { "TAB": [1,3,5], "IPD": [2] } so the JS preview knows gaps per prefix
-    used_nums_by_prefix = {}
-    for r in active_rows:
-        parts = r['tablet_id'].split('-')
-        if len(parts) >= 2:
-            try:
-                pfx = '-'.join(parts[:-1]).upper()
-                num = int(parts[-1])
-                used_nums_by_prefix.setdefault(pfx, []).append(num)
-            except ValueError:
-                pass
-
+        tablet_count, used, inactive = _tablet_form_context(conn)
     return render_template('add_tablet.html',
+                           prefix=TABLET_PREFIX,
                            tablet_count=tablet_count,
-                           used_nums_by_prefix=used_nums_by_prefix)
+                           used_nums=used, inactive_nums=inactive,
+                           form_codes=form_codes, form_device=form_device)
 
 
 @app.route('/tablets/signout', methods=['GET', 'POST'])
