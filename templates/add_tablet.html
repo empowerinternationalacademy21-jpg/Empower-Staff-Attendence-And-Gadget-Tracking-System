@@ -21,51 +21,45 @@
 <div class="form-card">
   <div class="form-card-header">
     <i class="fas fa-info-circle"></i>
-    Enter the number of tablets you want to register. The system will automatically
-    assign IDs starting from <strong>TAB-01</strong>, filling any gaps left by deleted tablets first.
+    <span>All tablets use the prefix <strong>{{ prefix }}</strong>. Type only each tablet's own
+    <strong>code number</strong> and the system adds <strong>{{ prefix }}-</strong> in front.</span>
   </div>
 
   <form method="POST" action="{{ url_for('add_tablet') }}" id="tablet-form">
 
     <div class="form-section-label">Tablet Identification</div>
 
-    <div class="form-row three-col">
-      <div class="form-group">
-        <label>ID Prefix <span class="required-star">*</span></label>
-        <div class="input-with-icon">
-          <i class="fas fa-tag"></i>
-          <input type="text" name="prefix" id="prefix-input" class="form-control"
-                 placeholder="e.g. TAB" value="TAB" maxlength="10" required
-                 style="text-transform:uppercase;"/>
-        </div>
-        <span class="form-note">Letters before the number (e.g. TAB → TAB-01)</span>
+    <div class="form-group">
+      <label>Tablet Code Number(s) <span class="required-star">*</span></label>
+      <div class="code-input">
+        <span class="code-prefix">{{ prefix }}-</span>
+        <input type="text" name="codes" id="codes-input" class="form-control"
+               placeholder="e.g. 1045   or   1045, 1050, 1062   or   1060-1075"
+               value="{{ form_codes }}" autocomplete="off" required autofocus/>
       </div>
+      <span class="form-note">
+        One number, several separated by commas, or a range with a dash
+        (<strong>1060-1075</strong> registers every number from 1060 to 1075).
+        You may also type the full code, e.g. {{ prefix }}-1045.
+      </span>
+    </div>
 
-      <div class="form-group">
-        <label>Device / Model Name</label>
-        <div class="input-with-icon">
-          <i class="fas fa-mobile-alt"></i>
-          <input type="text" name="device_name" id="device-input" class="form-control"
-                 placeholder="e.g. Samsung Tab, iPad Mini"/>
-        </div>
-        <span class="form-note">Used in the tablet name (optional)</span>
+    <div class="form-group">
+      <label>Device / Model Name</label>
+      <div class="input-with-icon">
+        <i class="fas fa-mobile-alt"></i>
+        <input type="text" name="device_name" id="device-input" class="form-control"
+               placeholder="e.g. Samsung Tab A8, Lenovo M10" maxlength="60"
+               value="{{ form_device }}"/>
       </div>
-
-      <div class="form-group">
-        <label>Number of Tablets <span class="required-star">*</span></label>
-        <div class="input-with-icon">
-          <i class="fas fa-hashtag"></i>
-          <input type="number" name="quantity" id="qty-input" class="form-control"
-                 value="1" min="1" max="100" required/>
-        </div>
-        <span class="form-note">How many tablets to register (max 100)</span>
-      </div>
+      <span class="form-note">Optional. Shown next to the code when signing tablets out.</span>
     </div>
 
     <!-- Live preview -->
     <div class="preview-box" id="preview-box">
-      <div class="preview-title"><i class="fas fa-eye"></i> Preview</div>
+      <div class="preview-title"><i class="fas fa-eye"></i> <span id="preview-title">Preview</span></div>
       <div id="preview-content" class="preview-ids"></div>
+      <div id="preview-notes" class="preview-notes"></div>
     </div>
 
     <div class="form-divider"></div>
@@ -186,59 +180,98 @@
   background: var(--ink-rule);
   margin: 1.5rem 0;
 }
+
+/* Fixed prefix + code number input */
+.code-input { display: flex; align-items: stretch; }
+.code-prefix {
+  display: inline-flex; align-items: center;
+  padding: 0 1rem;
+  background: var(--navy); color: var(--white);
+  font-weight: 800; letter-spacing: 1px; font-size: 1rem;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+.code-input .form-control { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-size: 1.05rem; }
+.form-card-header span { flex: 1; }
+
+.preview-tag.dup { background: transparent; color: var(--danger); border: 1.5px solid var(--danger); text-decoration: line-through; }
+.preview-tag.back { background: var(--warning-subtle); color: #7a4500; border: 1.5px solid rgba(232,135,10,.5); }
+.preview-notes { margin-top: .8rem; font-size: .82rem; line-height: 1.6; }
+.preview-notes .note-bad  { color: var(--danger); }
+.preview-notes .note-dup  { color: var(--danger); }
+.preview-notes .note-back { color: #7a4500; }
 </style>
 
 <div id="tablet-data"
-     data-used='{{ used_nums_by_prefix | tojson }}'
+     data-prefix='{{ prefix | tojson }}'
+     data-used='{{ used_nums | tojson }}'
+     data-inactive='{{ inactive_nums | tojson }}'
      style="display:none"></div>
 
 <script>
-// Live preview — mirrors the backend gap-filling logic exactly
-const prefixInput   = document.getElementById('prefix-input');
-const deviceInput   = document.getElementById('device-input');
-const qtyInput      = document.getElementById('qty-input');
-const previewBox    = document.getElementById('preview-content');
-// Read used numbers from data attribute to avoid JS linter warnings on Jinja syntax
-const USED_BY_PREFIX = JSON.parse(document.getElementById('tablet-data').dataset.used || '{}');
-const MAX_PREVIEW   = 12;
+// Live preview - mirrors the server-side parsing exactly
+const dataEl   = document.getElementById('tablet-data');
+const PREFIX   = JSON.parse(dataEl.dataset.prefix);
+const USED     = new Set(JSON.parse(dataEl.dataset.used || '[]'));
+const INACTIVE = new Set(JSON.parse(dataEl.dataset.inactive || '[]'));
+const MAX_BATCH = 200, MAX_SHOWN = 24;
 
-function updatePreview() {
-  const prefix  = (prefixInput.value || 'TAB').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const qty     = Math.max(1, Math.min(100, parseInt(qtyInput.value) || 1));
-  const usedSet = new Set(USED_BY_PREFIX[prefix] || []);
+const codesInput = document.getElementById('codes-input');
+const tagsBox    = document.getElementById('preview-content');
+const notesBox   = document.getElementById('preview-notes');
+const titleEl    = document.getElementById('preview-title');
 
-  previewBox.innerHTML = '';
-
-  // Find the first `qty` available numbers from 1 upward
-  const ids = [];
-  let counter = 1;
-  while (ids.length < qty && counter <= 9999) {
-    if (!usedSet.has(counter)) {
-      ids.push(`${prefix}-${String(counter).padStart(2, '0')}`);
-    }
-    counter++;
-  }
-
-  const showCount = Math.min(ids.length, MAX_PREVIEW);
-  ids.slice(0, showCount).forEach(function(id, i) {
-    const tag = document.createElement('span');
-    tag.className = 'preview-tag';
-    tag.textContent = id;
-    tag.style.animationDelay = `${i * 25}ms`;
-    previewBox.appendChild(tag);
+function parseCodes(raw) {
+  let text = raw.replace(new RegExp(PREFIX + '[\\s_-]*', 'ig'), '');
+  text = text.replace(/\s*[-\u2013\u2014]\s*/g, '-');
+  const codes = [], bad = [], seen = new Set();
+  const add = c => { const n = parseInt(c, 10); if (!seen.has(n)) { seen.add(n); codes.push(c); } };
+  text.split(/[,;\s]+/).filter(Boolean).forEach(function (tok) {
+    let m = tok.match(/^(\d{1,6})-(\d{1,6})$/);
+    if (m) {
+      const lo = parseInt(m[1], 10), hi = parseInt(m[2], 10);
+      if (lo > hi || hi - lo + 1 > MAX_BATCH) { bad.push(tok); return; }
+      const width = m[1][0] === '0' ? m[1].length : 0;
+      for (let n = lo; n <= hi; n++) add(String(n).padStart(width, '0'));
+    } else if (/^\d{1,6}$/.test(tok)) { add(tok); }
+    else { bad.push(tok); }
   });
-
-  if (qty > MAX_PREVIEW) {
-    const more = document.createElement('span');
-    more.className = 'preview-more';
-    more.textContent = `+ ${qty - MAX_PREVIEW} more…`;
-    previewBox.appendChild(more);
-  }
+  return { codes, bad };
 }
 
-prefixInput.addEventListener('input', updatePreview);
-deviceInput.addEventListener('input', updatePreview);
-qtyInput.addEventListener('input', updatePreview);
+function updatePreview() {
+  const { codes, bad } = parseCodes(codesInput.value);
+  tagsBox.innerHTML = ''; notesBox.innerHTML = '';
+  let fresh = 0; const dups = [], backs = [];
+
+  codes.forEach(function (c, i) {
+    const n = parseInt(c, 10);
+    const tag = document.createElement('span');
+    tag.className = 'preview-tag';
+    if (USED.has(n)) { tag.classList.add('dup'); dups.push(PREFIX + '-' + c); }
+    else if (INACTIVE.has(n)) { tag.classList.add('back'); backs.push(PREFIX + '-' + c); }
+    else { fresh++; }
+    tag.textContent = PREFIX + '-' + c;
+    tag.style.animationDelay = (Math.min(i, MAX_SHOWN) * 20) + 'ms';
+    if (i < MAX_SHOWN) tagsBox.appendChild(tag);
+  });
+  if (codes.length > MAX_SHOWN) {
+    const more = document.createElement('span');
+    more.className = 'preview-more';
+    more.textContent = '+ ' + (codes.length - MAX_SHOWN) + ' more...';
+    tagsBox.appendChild(more);
+  }
+
+  titleEl.textContent = codes.length
+    ? 'Preview - ' + fresh + ' new tablet' + (fresh === 1 ? '' : 's') : 'Preview';
+  const notes = [];
+  if (dups.length)  notes.push('<div class="note-dup"><i class="fas fa-ban"></i> Already registered (will be skipped): ' + dups.slice(0, 8).join(', ') + (dups.length > 8 ? ' ...' : '') + '</div>');
+  if (backs.length) notes.push('<div class="note-back"><i class="fas fa-undo"></i> Previously removed (will be restored): ' + backs.slice(0, 8).join(', ') + (backs.length > 8 ? ' ...' : '') + '</div>');
+  if (bad.length)   notes.push('<div class="note-bad"><i class="fas fa-exclamation-triangle"></i> Cannot read: ' + bad.slice(0, 8).join(', ') + '</div>');
+  if (codes.length > MAX_BATCH) notes.push('<div class="note-bad"><i class="fas fa-exclamation-triangle"></i> Maximum ' + MAX_BATCH + ' tablets at a time.</div>');
+  notesBox.innerHTML = notes.join('');
+}
+
+codesInput.addEventListener('input', updatePreview);
 updatePreview();
 </script>
 
