@@ -743,6 +743,8 @@ def tablet_transactions():
 @login_required
 def tablet_return(tx_id):
     admin = current_admin()
+    back = (url_for('overdue_tablets') if request.form.get('next') == 'overdue'
+            else url_for('tablet_transactions'))
     with get_db() as conn:
         tx = conn.execute(
             "SELECT tt.student_name, tt.status, tt.signed_out_by, t.tablet_id AS tab_code "
@@ -751,10 +753,10 @@ def tablet_return(tx_id):
         ).fetchone()
         if not tx:
             flash('Transaction not found.', 'danger')
-            return redirect(url_for('tablet_transactions'))
+            return redirect(back)
         if tx['status'] != 'Borrowed':
             flash(f"Tablet {tx['tab_code']} was already signed back in.", 'info')
-            return redirect(url_for('tablet_transactions'))
+            return redirect(back)
         conn.execute(
             "UPDATE tablet_transactions "
             "SET status='Returned', sign_back_time=?, signed_back_by=? "
@@ -765,7 +767,19 @@ def tablet_return(tx_id):
                  + (f" (signed out by {tx['signed_out_by']})" if tx['signed_out_by'] else ''))
     flash(f"Tablet {tx['tab_code']} returned by {tx['student_name']}, "
           f"signed in by {admin}.", 'success')
-    return redirect(url_for('tablet_transactions'))
+    return redirect(back)
+
+
+@app.route('/tablets/overdue')
+@login_required
+def overdue_tablets():
+    """All overdue tablets, who has them, and which admin approved the sign-out.
+    The page keeps itself up to date (see templates/overdue.html)."""
+    with get_db() as conn:
+        rows = _overdue_rows(conn)
+    return render_template('overdue.html',
+                           overdue=_overdue_payload(rows),
+                           server_now_ms=int(_time.time() * 1000))
 
 
 @app.route('/tablets/delete/<int:tablet_id>', methods=['POST'])
@@ -1189,7 +1203,8 @@ def _overdue_rows(conn):
     now = datetime.utcnow().isoformat()
     return conn.execute("""
         SELECT tt.id, tt.student_name, tt.student_class, tt.expected_return_time,
-               tt.signed_out_by, t.tablet_id AS tab_code
+               tt.signed_out_by, tt.quantity, tt.sign_out_time,
+               tt.took_charger, tt.took_earphones, t.tablet_id AS tab_code
         FROM tablet_transactions tt
         JOIN tablets t ON tt.tablet_id = t.id
         WHERE tt.status='Borrowed' AND tt.expected_return_time < ?
@@ -1204,8 +1219,21 @@ def _overdue_payload(rows):
         'student': r['student_name'],
         'class': r['student_class'] or '',
         'by': r['signed_out_by'] or '',
-        'expected': fmt_dt_time(r['expected_return_time'])
+        'expected': fmt_dt_time(r['expected_return_time']),
+        'out': fmt_dt(r['sign_out_time']),
+        'qty': r['quantity'] or 1,
+        'charger': bool(r['took_charger']),
+        'earphones': bool(r['took_earphones']),
+        'due_ms': _to_ms(r['expected_return_time']),
     } for r in rows]
+
+
+def _to_ms(value):
+    """Stored UTC time -> milliseconds since 1970 (None if unreadable)."""
+    try:
+        return int(to_local(value).timestamp() * 1000)
+    except Exception:
+        return None
 
 
 @app.route('/api/overdue')
@@ -1240,6 +1268,7 @@ def api_tablet_status():
         # same maths as the dashboard's Tablet Status chart
         'chart': [max(total - borrowed, 0), max(borrowed - overdue_n, 0), overdue_n],
         'overdue': _overdue_payload(rows),
+        'server_ms': int(_time.time() * 1000),
     })
     resp.headers['Cache-Control'] = 'no-store'
     return resp
