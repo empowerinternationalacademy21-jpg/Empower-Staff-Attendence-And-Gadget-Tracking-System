@@ -1,0 +1,190 @@
+{% extends 'base.html' %}
+{% block title %}Overdue Tablets - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><i class="fas fa-bell"></i> Overdue Tablets</h1>
+    <p class="od-sub">
+      <span class="od-live"><span class="od-dot"></span> Live</span>
+      This page updates by itself. <span id="odChecked"></span>
+    </p>
+  </div>
+  <a href="{{ url_for('tablet_transactions') }}" class="btn btn-outline">
+    <i class="fas fa-list"></i> All Transactions
+  </a>
+</div>
+
+<!-- Summary -->
+<div class="stat-grid">
+  <div class="stat-card stat-red">
+    <div class="stat-icon"><i class="fas fa-tablet-alt"></i></div>
+    <div class="stat-info">
+      <span class="stat-number" id="odCount">0</span>
+      <span class="stat-label">Overdue Tablets</span>
+    </div>
+  </div>
+  <div class="stat-card stat-yellow">
+    <div class="stat-icon"><i class="fas fa-user-graduate"></i></div>
+    <div class="stat-info">
+      <span class="stat-number" id="odStudents">0</span>
+      <span class="stat-label">Students Involved</span>
+    </div>
+  </div>
+  <div class="stat-card stat-blue">
+    <div class="stat-icon"><i class="fas fa-hourglass-half"></i></div>
+    <div class="stat-info">
+      <span class="stat-number od-small" id="odLongest">—</span>
+      <span class="stat-label">Longest Overdue</span>
+    </div>
+  </div>
+</div>
+
+<section class="section">
+  <div class="card" id="odTableCard">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Tablet</th><th>Student</th><th>Class</th><th>Qty</th>
+          <th>Signed Out</th><th>Approved By</th><th>Was Due</th>
+          <th>Overdue By</th><th>Accessories</th><th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="odBody"></tbody>
+    </table>
+  </div>
+
+  <div class="empty-state small" id="odEmpty" style="display:none">
+    <i class="fas fa-check-circle" style="color:var(--green)"></i>
+    <p>No overdue tablets — everything is on time.</p>
+  </div>
+</section>
+
+<noscript><p>Please enable JavaScript to see the overdue list.</p></noscript>
+
+<style>
+  .od-sub { margin: .35rem 0 0; font-size: .85rem; color: var(--ink-light); }
+  .od-live {
+    display: inline-flex; align-items: center; gap: .35rem;
+    font-weight: 700; font-size: .72rem; letter-spacing: .6px; text-transform: uppercase;
+    color: var(--green); background: var(--green-subtle, #e6f6ee);
+    padding: .15rem .6rem; border-radius: 999px; margin-right: .5rem;
+  }
+  .od-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+    animation: odPulse 1.6s ease-out infinite;
+  }
+  @keyframes odPulse {
+    0%   { box-shadow: 0 0 0 0 rgba(15,166,87,.55); }
+    100% { box-shadow: 0 0 0 9px rgba(15,166,87,0); }
+  }
+  .stat-number.od-small { font-size: 1.5rem; }
+  .od-who { white-space: nowrap; font-weight: 600; color: var(--navy); }
+  .od-who i { color: var(--green); margin-right: .25rem; }
+  #odTableCard { overflow-x: auto; }
+  @keyframes odNew { 0% { background: #ffd9de; } 100% { background: transparent; } }
+  tr.od-new td { animation: odNew 3s ease-out 1; }
+</style>
+
+<script>
+(function () {
+  var DATA       = {{ overdue|tojson }};
+  var RETURN_URL = "{{ url_for('tablet_return', tx_id=0) }}";
+  var offset     = {{ server_now_ms }} - Date.now();   // server clock minus this browser's clock
+  var seen       = null;                               // ids already on screen
+
+  function esc(v) {
+    var d = document.createElement('div');
+    d.textContent = (v === null || v === undefined) ? '' : String(v);
+    return d.innerHTML;
+  }
+
+  function nowMs() { return Date.now() + offset; }
+
+  function overdueText(dueMs) {
+    if (dueMs === null || dueMs === undefined) return '—';
+    var m = Math.floor((nowMs() - dueMs) / 60000);
+    if (m < 1)    return 'just now';
+    if (m < 60)   return m + ' min';
+    if (m < 1440) { var h = Math.floor(m / 60), r = m % 60; return h + ' h' + (r ? ' ' + r + ' min' : ''); }
+    var d = Math.floor(m / 1440), hh = Math.floor((m % 1440) / 60);
+    return d + ' d' + (hh ? ' ' + hh + ' h' : '');
+  }
+
+  function accessories(t) {
+    var a = '';
+    if (t.charger)   a += '<i class="fas fa-plug" title="Took charger"></i> ';
+    if (t.earphones) a += '<i class="fas fa-headphones" title="Took earphones"></i>';
+    return a || '—';
+  }
+
+  function render(list) {
+    var body = document.getElementById('odBody');
+    var html = '';
+    list.forEach(function (t) {
+      var isNew = seen !== null && seen.indexOf(t.id) === -1;
+      html += '<tr class="row-overdue' + (isNew ? ' od-new' : '') + '">' +
+        '<td><span class="badge badge-blue">' + esc(t.tablet) + '</span></td>' +
+        '<td><strong>' + esc(t.student) + '</strong></td>' +
+        '<td>' + esc(t['class']) + '</td>' +
+        '<td>' + esc(t.qty) + '</td>' +
+        '<td>' + esc(t.out) + '</td>' +
+        '<td class="od-who"><i class="fas fa-user-shield"></i>' + (t.by ? esc(t.by) : '—') + '</td>' +
+        '<td>' + esc(t.expected) + '</td>' +
+        '<td><span class="badge badge-red" data-due="' + esc(t.due_ms === null ? '' : t.due_ms) + '">' +
+            esc(overdueText(t.due_ms)) + '</span></td>' +
+        '<td>' + accessories(t) + '</td>' +
+        '<td><form method="POST" action="' + RETURN_URL.replace(/0$/, String(t.id)) + '" ' +
+            'onsubmit="return confirm(\'Mark as returned?\')">' +
+            '<input type="hidden" name="next" value="overdue">' +
+            '<button class="btn btn-sm btn-primary"><i class="fas fa-undo"></i> Return</button></form></td>' +
+        '</tr>';
+    });
+    body.innerHTML = html;
+    seen = list.map(function (t) { return t.id; });
+
+    document.getElementById('odTableCard').style.display = list.length ? '' : 'none';
+    document.getElementById('odEmpty').style.display     = list.length ? 'none' : '';
+
+    var students = {};
+    list.forEach(function (t) { students[(t.student || '').trim().toLowerCase() + '|' + (t['class'] || '')] = 1; });
+    document.getElementById('odCount').textContent    = list.length;
+    document.getElementById('odStudents').textContent = Object.keys(students).length;
+    refreshDurations(list);
+  }
+
+  function refreshDurations(list) {
+    document.querySelectorAll('#odBody [data-due]').forEach(function (el) {
+      var v = el.getAttribute('data-due');
+      el.textContent = overdueText(v === '' ? null : Number(v));
+    });
+    var longest = null;
+    (list || DATA).forEach(function (t) {
+      if (t.due_ms !== null && (longest === null || t.due_ms < longest)) longest = t.due_ms;
+    });
+    document.getElementById('odLongest').textContent = longest === null ? '—' : overdueText(longest);
+  }
+
+  function stamp() {
+    var d = new Date();
+    document.getElementById('odChecked').textContent =
+      'Last checked ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.';
+  }
+
+  render(DATA);
+  stamp();
+
+  // main.js sends this every few seconds with the fresh overdue list
+  document.addEventListener('tablet-status', function (e) {
+    if (e.detail.server_ms) offset = e.detail.server_ms - Date.now();
+    DATA = e.detail.overdue;
+    render(DATA);
+    stamp();
+  });
+
+  // keep the "overdue by" times ticking between checks
+  setInterval(function () { refreshDurations(DATA); }, 15000);
+})();
+</script>
+
+{% endblock %}
