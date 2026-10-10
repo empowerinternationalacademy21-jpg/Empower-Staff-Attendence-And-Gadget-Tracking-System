@@ -35,8 +35,9 @@
           </td>
           <td>
             {% if tx['took_charger'] %}<i class="fas fa-plug" title="Charger"></i> {% endif %}
-            {% if tx['took_earphones'] %}<i class="fas fa-headphones" title="Earphones"></i>{% endif %}
-            {% if not tx['took_charger'] and not tx['took_earphones'] %}—{% endif %}
+            {% if tx['took_earphones'] %}<i class="fas fa-headphones" title="Earphones"></i> {% endif %}
+            {% if tx['took_usb'] %}<i class="fab fa-usb" title="USB"></i>{% endif %}
+            {% if not tx['took_charger'] and not tx['took_earphones'] and not tx['took_usb'] %}—{% endif %}
           </td>
           <td><span class="badge badge-yellow">Borrowed</span></td>
           <td>
@@ -82,8 +83,9 @@
           <td>{{ tx['duration_hours']|fmt_duration }}</td>
           <td>
             {% if tx['took_charger'] %}<i class="fas fa-plug" title="Charger"></i> {% endif %}
-            {% if tx['took_earphones'] %}<i class="fas fa-headphones" title="Earphones"></i>{% endif %}
-            {% if not tx['took_charger'] and not tx['took_earphones'] %}—{% endif %}
+            {% if tx['took_earphones'] %}<i class="fas fa-headphones" title="Earphones"></i> {% endif %}
+            {% if tx['took_usb'] %}<i class="fab fa-usb" title="USB"></i>{% endif %}
+            {% if not tx['took_charger'] and not tx['took_earphones'] and not tx['took_usb'] %}—{% endif %}
           </td>
         </tr>
         {% endfor %}
