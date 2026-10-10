@@ -25,6 +25,21 @@ function saveNotified(set) {
   try { sessionStorage.setItem('eiaNotified', JSON.stringify([...set])); } catch (e) {}
 }
 
+// Live count in the navigation menu (little red number)
+function updateBadges(n) {
+  document.querySelectorAll('[data-overdue-count]').forEach(el => {
+    el.textContent = n > 99 ? '99+' : n;
+    el.classList.toggle('hidden', n === 0);
+  });
+}
+
+// Clicking the red banner opens the Overdue page
+if (overdueBanner && overdueBanner.dataset.href) {
+  overdueBanner.addEventListener('click', () => {
+    window.location.href = overdueBanner.dataset.href;
+  });
+}
+
 function renderBanner(overdue) {
   if (!overdue.length) {
     overdueBanner.classList.add('hidden');
@@ -75,6 +90,7 @@ function checkStatus() {
     .then(data => {
       if (!data) return;
       renderBanner(data.overdue);
+      updateBadges(data.overdue.length);
       notifyNew(data.overdue);
       // Let any page (e.g. the dashboard) update itself with the fresh numbers
       document.dispatchEvent(new CustomEvent('tablet-status', { detail: data }));
