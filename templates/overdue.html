@@ -114,7 +114,8 @@
   function accessories(t) {
     var a = '';
     if (t.charger)   a += '<i class="fas fa-plug" title="Took charger"></i> ';
-    if (t.earphones) a += '<i class="fas fa-headphones" title="Took earphones"></i>';
+    if (t.earphones) a += '<i class="fas fa-headphones" title="Took earphones"></i> ';
+    if (t.usb)       a += '<i class="fab fa-usb" title="Took USB"></i>';
     return a || '—';
   }
 
