@@ -667,6 +667,7 @@ def tablet_signout():
                 quantity = 1
             took_charger = 1 if 'took_charger' in request.form else 0
             took_earphones = 1 if 'took_earphones' in request.form else 0
+            took_usb = 1 if 'took_usb' in request.form else 0
 
             now_local = local_now()
             ret_local, error = None, None
@@ -692,11 +693,11 @@ def tablet_signout():
                     INSERT INTO tablet_transactions
                         (tablet_id, student_name, student_class, quantity,
                          duration_hours, sign_out_time, expected_return_time,
-                         took_charger, took_earphones, status, signed_out_by)
-                    VALUES (?,?,?,?,?,?,?,?,?,'Borrowed',?)
+                         took_charger, took_earphones, took_usb, status, signed_out_by)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,'Borrowed',?)
                 """, (tablet_db_id, student_name, student_class, quantity,
                       duration_hours, to_utc_iso(now_local), to_utc_iso(ret_local),
-                      took_charger, took_earphones, admin))
+                      took_charger, took_earphones, took_usb, admin))
 
                 tab = conn.execute(
                     "SELECT tablet_id FROM tablets WHERE id=?", (tablet_db_id,)).fetchone()
@@ -1204,7 +1205,7 @@ def _overdue_rows(conn):
     return conn.execute("""
         SELECT tt.id, tt.student_name, tt.student_class, tt.expected_return_time,
                tt.signed_out_by, tt.quantity, tt.sign_out_time,
-               tt.took_charger, tt.took_earphones, t.tablet_id AS tab_code
+               tt.took_charger, tt.took_earphones, tt.took_usb, t.tablet_id AS tab_code
         FROM tablet_transactions tt
         JOIN tablets t ON tt.tablet_id = t.id
         WHERE tt.status='Borrowed' AND tt.expected_return_time < ?
@@ -1224,6 +1225,7 @@ def _overdue_payload(rows):
         'qty': r['quantity'] or 1,
         'charger': bool(r['took_charger']),
         'earphones': bool(r['took_earphones']),
+        'usb': bool(r['took_usb']),
         'due_ms': _to_ms(r['expected_return_time']),
     } for r in rows]
 
