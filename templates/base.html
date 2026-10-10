@@ -52,7 +52,7 @@
       <!-- Tablets dropdown -->
       <div class="nav-dropdown">
         <a href="{{ url_for('tablet_list') }}" class="nav-dropdown-toggle">
-          <i class="fas fa-tablet-alt"></i> Tablets <i class="fas fa-chevron-down nav-caret"></i>
+          <i class="fas fa-tablet-alt"></i> Tablets <span class="nav-badge hidden" data-overdue-count>0</span> <i class="fas fa-chevron-down nav-caret"></i>
         </a>
         <div class="nav-dropdown-menu">
           <a href="{{ url_for('tablet_list') }}">
@@ -60,6 +60,9 @@
           </a>
           <a href="{{ url_for('tablet_transactions') }}">
             <i class="fas fa-exchange-alt"></i> Transactions
+          </a>
+          <a href="{{ url_for('overdue_tablets') }}">
+            <i class="fas fa-bell"></i> Overdue <span class="nav-badge hidden" data-overdue-count>0</span>
           </a>
           <div class="dropdown-divider"></div>
           <a href="{{ url_for('add_tablet') }}">
@@ -82,7 +85,7 @@
 
 <!-- OVERDUE NOTIFICATION BANNER (only when logged in) -->
 {% if session.get('logged_in') %}
-<div id="overdue-banner" class="overdue-banner hidden"></div>
+<div id="overdue-banner" class="overdue-banner hidden" data-href="{{ url_for('overdue_tablets') }}" title="Click to see all overdue tablets"></div>
 {% endif %}
 
 <!-- FLASH MESSAGES -->
@@ -252,6 +255,23 @@
   background: var(--ink-rule, #e5e7eb);
   margin: .3rem 0;
 }
+
+/* ── Live overdue count in the menu + clickable banner ── */
+.nav-badge {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 6px;
+  margin-left: .25rem;
+  border-radius: 999px;
+  background: var(--danger, #d63041);
+  color: #fff;
+  font-size: .68rem;
+  font-weight: 800;
+  line-height: 18px;
+  text-align: center;
+}
+.nav-badge.hidden { display: none; }
+.overdue-banner[data-href] { cursor: pointer; }
 </style>
 
 </body>
