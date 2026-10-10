@@ -213,6 +213,7 @@ CREATE TABLE IF NOT EXISTS tablet_transactions (
     signed_back_by TEXT,
     took_charger INTEGER DEFAULT 0,
     took_earphones INTEGER DEFAULT 0,
+    took_usb INTEGER DEFAULT 0,
     status TEXT DEFAULT 'Borrowed',
     created_at TEXT DEFAULT (datetime('now'))
 );
@@ -224,6 +225,7 @@ CREATE TABLE IF NOT EXISTS tablet_transactions (
 MIGRATIONS = [
     ("tablet_transactions", "signed_out_by", "TEXT"),
     ("tablet_transactions", "signed_back_by", "TEXT"),
+    ("tablet_transactions", "took_usb", "INTEGER DEFAULT 0"),
 ]
 
 
