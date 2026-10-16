@@ -7,35 +7,59 @@
   <span class="date-badge"><i class="fas fa-calendar"></i> {{ today.strftime('%A, %d %B %Y') }}</span>
 </div>
 
-<!-- ── ATTENDANCE STATS ── -->
+<!-- ── PERSONAL LAPTOP STATS ── -->
 <section class="section">
-  <h2 class="section-title"> Staff Attendance Today</h2>
+  <h2 class="section-title"><i class="fas fa-laptop"></i> Personal Laptops</h2>
   <div class="stat-grid">
     <div class="stat-card stat-blue">
-      <div class="stat-icon"><i class="fas fa-users"></i></div>
+      <div class="stat-icon"><i class="fas fa-user-graduate"></i></div>
       <div class="stat-info">
-        <span class="stat-number">{{ total_staff }}</span>
-        <span class="stat-label">Total Staff</span>
+        <span class="stat-number" data-live="lap_students">{{ lap_students }}</span>
+        <span class="stat-label">Students With Laptops</span>
       </div>
     </div>
     <div class="stat-card stat-green">
-      <div class="stat-icon"><i class="fas fa-user-check"></i></div>
+      <div class="stat-icon"><i class="fas fa-warehouse"></i></div>
       <div class="stat-info">
-        <span class="stat-number">{{ present_today }}</span>
-        <span class="stat-label">Present Today</span>
+        <span class="stat-number" data-live="lap_in">{{ lap_in }}</span>
+        <span class="stat-label">In Storage</span>
+      </div>
+    </div>
+    <div class="stat-card stat-yellow">
+      <div class="stat-icon"><i class="fas fa-laptop-house"></i></div>
+      <div class="stat-info">
+        <span class="stat-number" data-live="lap_out">{{ lap_out }}</span>
+        <span class="stat-label">Out Now</span>
       </div>
     </div>
     <div class="stat-card stat-red">
-      <div class="stat-icon"><i class="fas fa-user-times"></i></div>
+      <div class="stat-icon"><i class="fas fa-bell"></i></div>
       <div class="stat-info">
-        <span class="stat-number">{{ absent_today }}</span>
-        <span class="stat-label">Absent Today</span>
+        <span class="stat-number" data-live="lap_overdue">{{ lap_overdue_n }}</span>
+        <span class="stat-label">Overdue Laptops</span>
       </div>
     </div>
   </div>
+
+  <!-- refreshed live by the script at the bottom of this page -->
+  <div id="laptop-overdue-live">
+  {% if overdue_laptops %}
+  <div class="alert alert-danger overdue-list">
+    <h4><i class="fas fa-bell"></i> Overdue Laptops!</h4>
+    {% for t in overdue_laptops %}
+    <div class="overdue-item">
+      <i class="fas fa-laptop"></i>
+      <strong>{{ t['student'] }}</strong> ({{ t['class'] }}) — slot {{ t['slot'] }} — was due {{ t['expected'] }}{% if t['by'] %} — Approved by <strong>{{ t['by'] }}</strong>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  </div>
+
   <div class="section-actions">
-    <a href="{{ url_for('gate') }}" class="btn btn-primary"><i class="fas fa-door-open"></i> Go to Gate</a>
-    <a href="{{ url_for('attendance_history') }}" class="btn btn-outline"><i class="fas fa-history"></i> View History</a>
+    <a href="{{ url_for('laptop_desk') }}" class="btn btn-primary"><i class="fas fa-door-open"></i> Laptop Desk</a>
+    <a href="{{ url_for('laptop_overdue_page') }}" class="btn btn-outline"><i class="fas fa-bell"></i> Overdue Laptops</a>
+    <a href="{{ url_for('laptop_students_register') }}" class="btn btn-outline"><i class="fas fa-user-clock"></i> Students &amp; Timetables</a>
   </div>
 </section>
 
@@ -137,12 +161,23 @@
 
     <div class="chart-card">
       <div class="chart-head">
-        <h3>Staff Attendance Today</h3>
-        <span class="chart-sub">Present vs absent</span>
+        <h3>Laptop Status</h3>
+        <span class="chart-sub">Where every student laptop is right now</span>
       </div>
       <div class="chart-body">
-        <canvas id="chartStaff"></canvas>
-        <div class="chart-empty" id="emptyStaff">No staff registered yet.</div>
+        <canvas id="chartLaptopStatus"></canvas>
+        <div class="chart-empty" id="emptyLaptopStatus">No laptop students registered yet.</div>
+      </div>
+    </div>
+
+    <div class="chart-card chart-full">
+      <div class="chart-head">
+        <h3>Laptop Timetable Compliance</h3>
+        <span class="chart-sub">Sessions per day, last 14 days: returned on time vs late</span>
+      </div>
+      <div class="chart-body">
+        <canvas id="chartLaptopDaily"></canvas>
+        <div class="chart-empty" id="emptyLaptopDaily">No laptop sessions in the last 14 days.</div>
       </div>
     </div>
   </div>
@@ -218,6 +253,7 @@
     background: linear-gradient(90deg, var(--navy), var(--green));
   }
   .chart-wide { grid-column: span 2; }
+  .chart-full { grid-column: span 3; }
   .chart-head { margin-bottom: .9rem; }
   .chart-head h3 {
     font-family: var(--font-display);
@@ -239,11 +275,11 @@
 
   @media (max-width: 1000px) {
     .chart-grid { grid-template-columns: 1fr 1fr; }
-    .chart-wide { grid-column: span 2; }
+    .chart-wide, .chart-full { grid-column: span 2; }
   }
   @media (max-width: 640px) {
     .chart-grid { grid-template-columns: 1fr; }
-    .chart-wide { grid-column: span 1; }
+    .chart-wide, .chart-full { grid-column: span 1; }
     .chart-body { height: 260px; }
   }
 </style>
@@ -430,8 +466,33 @@
     });
   }
 
-  // 4) Staff attendance doughnut
-  doughnut('chartStaff', 'emptyStaff', D.staff, [GREEN, RED], 'Staff');
+  // 4) Laptop status doughnut
+  window.__laptopChart = doughnut('chartLaptopStatus', 'emptyLaptopStatus', D.laptop_status,
+           [GREEN, AMBER, RED], 'Laptops');
+
+  // 5) Laptop timetable compliance (stacked bars)
+  var lapHas = sum(D.laptop_daily.on_time) + sum(D.laptop_daily.late) > 0;
+  var lctx = show('chartLaptopDaily', 'emptyLaptopDaily', lapHas);
+  if (lctx) {
+    new Chart(lctx, {
+      type: 'bar',
+      data: {
+        labels: D.laptop_daily.labels,
+        datasets: [
+          { label: 'Returned on time', data: D.laptop_daily.on_time, backgroundColor: GREEN, borderRadius: 6, stack: 's' },
+          { label: 'Late / overdue',   data: D.laptop_daily.late,    backgroundColor: RED,   borderRadius: 6, stack: 's' }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 7 } },
+          y: { stacked: true, beginAtZero: true, grid: { color: GRID }, border: { display: false }, ticks: { precision: 0 } }
+        },
+        plugins: { legend: { position: 'top', align: 'end', labels: { usePointStyle: true, pointStyle: 'circle', padding: 16 } } }
+      }
+    });
+  }
 })();
 </script>
 
@@ -475,6 +536,43 @@
     box.innerHTML = html + '</div>';
   }
 
+  var lastLaptopIds = null;
+  function updateLaptops(d) {
+    var l = d.laptops;
+    setNumber('lap_students', l.students);
+    setNumber('lap_in', l.in_storage);
+    setNumber('lap_out', l.out);
+    setNumber('lap_overdue', l.overdue);
+
+    var box = document.getElementById('laptop-overdue-live');
+    if (box) {
+      if (!d.laptop_overdue.length) { box.innerHTML = ''; }
+      else {
+        var html = '<div class="alert alert-danger overdue-list"><h4><i class="fas fa-bell"></i> Overdue Laptops!</h4>';
+        d.laptop_overdue.forEach(function (t) {
+          html += '<div class="overdue-item"><i class="fas fa-laptop"></i> <strong>' + esc(t.student) + '</strong> (' +
+            esc(t['class']) + ') \u2014 slot ' + esc(t.slot) + ' \u2014 was due ' + esc(t.expected) +
+            (t.by ? ' \u2014 Approved by <strong>' + esc(t.by) + '</strong>' : '') + '</div>';
+        });
+        box.innerHTML = html + '</div>';
+      }
+    }
+    var ids = d.laptop_overdue.map(function (t) { return t.id; });
+    if (lastLaptopIds !== null && ids.some(function (id) { return lastLaptopIds.indexOf(id) === -1; })) {
+      var num = document.querySelector('[data-live="lap_overdue"]');
+      var card = num && num.closest('.stat-card');
+      if (card) { card.classList.remove('flash-new'); void card.offsetWidth; card.classList.add('flash-new'); }
+    }
+    lastLaptopIds = ids;
+
+    var ch = window.__laptopChart;
+    if (ch) {
+      ch.data.datasets[0].data = d.laptop_chart;
+      ch.options.plugins.centerText.text = l.students;
+      ch.update();
+    }
+  }
+
   document.addEventListener('tablet-status', function (e) {
     var d = e.detail, c = d.counts;
     setNumber('total', c.total);
@@ -482,6 +580,7 @@
     setNumber('borrowed', c.borrowed);
     setNumber('overdue', c.overdue);
     renderOverdueList(d.overdue);
+    if (d.laptops) updateLaptops(d);
 
     // Pulse the Overdue card when a NEW tablet becomes overdue
     var ids = d.overdue.map(function (t) { return t.id; });
