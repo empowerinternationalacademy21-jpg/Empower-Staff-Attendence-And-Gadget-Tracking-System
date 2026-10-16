@@ -19,11 +19,15 @@
     <div class="form-row">
       <div class="form-group">
         <label>Student Name *</label>
-        <input type="text" name="student_name" class="form-control" placeholder="Student's full name" value="{{ form.get('student_name', '') }}" required/>
+        <input type="text" name="student_name" id="student_name" class="form-control" placeholder="Type a few letters, e.g. muk gra" value="{{ form.get('student_name', '') }}" autocomplete="off" required/>
+        <span class="form-note" id="student-hint">
+          {% if students %}Start typing and pick the student — the full name and class fill in for you.
+          {% else %}No students registered yet — <a href="{{ url_for('students_register') }}">add them here</a>, or type the name.{% endif %}
+        </span>
       </div>
       <div class="form-group">
         <label>Class *</label>
-        <input type="text" name="student_class" class="form-control" placeholder="e.g. Grade 9A" value="{{ form.get('student_class', '') }}" required/>
+        <input type="text" name="student_class" id="student_class" class="form-control" placeholder="e.g. Grade 9A" value="{{ form.get('student_class', '') }}" required/>
       </div>
     </div>
 
@@ -112,6 +116,29 @@
 #return-hint.ok  { color: var(--green-dark, #0b7a47); font-weight: 600; }
 </style>
 
+<script src="{{ url_for('static', filename='js/student-picker.js') }}"></script>
+<script>
+// Type-ahead for the student's name: pick from the school register and the
+// class is filled in automatically. (Typing a name that is not in the register still works.)
+(function () {
+  var REGISTER = {{ students|tojson }};
+  var nameEl = document.getElementById('student_name');
+  var classEl = document.getElementById('student_class');
+  var hint = document.getElementById('student-hint');
+  if (!window.StudentPicker || !nameEl || !REGISTER.length) return;
+  var initial = hint.innerHTML;
+  StudentPicker.attach({
+    input: nameEl,
+    data: REGISTER,
+    noMatch: 'No match in the register — you can still type the full name',
+    onSelect: function (s) {
+      classEl.value = s.c;
+      hint.innerHTML = '<i class="fas fa-check-circle" style="color:#0b7a47"></i> From the school register.';
+    },
+    onClear: function () { hint.innerHTML = initial; }
+  });
+})();
+</script>
 <script>
 // The clock follows the SERVER's time in the school's time zone, so it is
 // correct even if this device's clock or time zone is wrong.
