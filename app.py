@@ -20,6 +20,7 @@ import os
 import io
 
 from werkzeug.security import check_password_hash
+from werkzeug.utils import secure_filename
 
 from db import get_db, init_db
 
@@ -105,6 +106,7 @@ ACTION_META = {
     'laptop_import':   ('Imported laptop students', 'fa-file-import', 'a-blue'),
     'timetable_edit':  ('Edited timetable',      'fa-calendar-alt', 'a-blue'),
     'timetable_consent': ('Recorded consent',    'fa-signature',    'a-teal'),
+    'timetable_pdf':   ('Timetable PDF',         'fa-file-pdf',     'a-blue'),
     'laptop_signout':  ('Signed out laptop',     'fa-laptop',       'a-amber'),
     'laptop_return':   ('Signed in laptop',      'fa-undo',         'a-teal'),
     'laptop_blocked':  ('Laptop sign-out blocked', 'fa-ban',        'a-red'),
@@ -728,6 +730,16 @@ def slot_label(slot):
     return f"{fmt12(slot['start_time'])} – {fmt12(slot['end_time'])}"
 
 
+def slot_title(slot):
+    """Like slot_label, with the interval's name in front when it has one ("Prep · 7:00 PM – 9:00 PM")."""
+    name = (slot.get('label') or '').strip()
+    return f"{name} · {slot_label(slot)}" if name else slot_label(slot)
+
+
+def clean_slot_label(raw):
+    return re.sub(r'\s+', ' ', (raw or '')).strip()[:40]
+
+
 def _by_start(slots):
     return sorted(slots, key=lambda s: (int(s['weekday']), hhmm_to_min(s['start_time'])))
 
@@ -790,7 +802,7 @@ def check_laptop_access(name, slots, consent_ok, is_out, now_local):
     active = find_active_slot(slots, now_local)
     if active:
         return {'ok': True, 'code': 'ok', 'slot': active,
-                'message': f"Allowed — slot {slot_label(active)} today. "
+                'message': f"Allowed — slot {slot_title(active)} today. "
                            f"Laptop must be back by {fmt12(active['end_time'])}."}
 
     wd = now_local.weekday()
@@ -832,6 +844,150 @@ def validate_slot(weekday, start, end, others):
             return (f"{WEEKDAYS[wd]} {fmt12(start)} – {fmt12(end)} overlaps another slot "
                     f"({slot_label(o)})."), a, b
     return None, a, b
+
+
+# ─────────────────────────────────────────────
+# TIMETABLE READER (PDF / typed text -> day + time intervals)
+# Pure functions. Understands lines such as
+#     Tuesday 11:30-3:20            (11:30 AM to 3:20 PM)
+#     Tue prep 7-9                  (prep = evening, so 7 PM to 9 PM)
+#     Mon - Fri  Prep 7:9           ("7:9" is read as 7 to 9)
+#     Wednesday 8am-10am, 2pm-4pm
+# or a day on its own line with the times underneath it. Whatever is read is
+# only ever a SUGGESTION: the admin checks it in a preview before it is saved.
+# ─────────────────────────────────────────────
+
+_DAY_PAT = (r'(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?'
+            r'|fri(?:day)?|sat(?:urday)?|sun(?:day)?)')
+_DAY_RE = re.compile(r'(?<![a-z])(' + _DAY_PAT + r')(?![a-z])', re.I)
+_DAY_SPAN_RE = re.compile(r'(?<![a-z])(' + _DAY_PAT + r')\s*(?:-|to|until|through)\s*('
+                          + _DAY_PAT + r')(?![a-z])', re.I)
+_DAY_INDEX = {'mon': 0, 'tue': 1, 'wed': 2, 'thu': 3, 'fri': 4, 'sat': 5, 'sun': 6}
+
+_T = r'(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?'
+_RANGE_RE = re.compile(r'(?<![\d:.])' + _T + r'\s*(?:-|to|until)\s*' + _T + r'(?![\d:])', re.I)
+_EVENING_RE = re.compile(r'prep|evening|night|study|homework|boarding|supper', re.I)
+_LABEL_NOISE = {'from', 'at', 'and', 'to', 'on', 'every', 'each', 'the', 'time', 'times',
+                'slot', 'slots', 'laptop', 'laptops', 'allowed', '&'}
+MAX_TIMETABLE_ROWS = 200
+
+
+def _resolve_range(h1, m1, ap1, h2, m2, ap2, evening=False):
+    """('11','30',None,'3','20',None) -> (690, 920): minutes since midnight, or None if nonsense.
+    With no am/pm given: a start of 1-6 is the afternoon, 7-11 the morning (the evening
+    when the interval is a prep/evening one), and the end is the first time after the start."""
+    h1, h2, m1, m2 = int(h1), int(h2), int(m1 or 0), int(m2 or 0)
+    ap1 = ap1[0].lower() if ap1 else None
+    ap2 = ap2[0].lower() if ap2 else None
+    if h1 > 23 or h2 > 23 or m1 > 59 or m2 > 59:
+        return None
+    if (ap1 and not 1 <= h1 <= 12) or (ap2 and not 1 <= h2 <= 12):
+        return None
+
+    def with_meridiem(h, ap):
+        return (h % 12) + (12 if ap == 'p' else 0)
+
+    if ap2 and not ap1 and h1 <= 12:
+        e = with_meridiem(h2, ap2)
+        same = (h1 % 12) + (12 if e >= 12 else 0)
+        other = (h1 % 12) + (0 if e >= 12 else 12)
+        s = same if same * 60 + m1 < e * 60 + m2 else other
+    else:
+        if ap1:
+            s = with_meridiem(h1, ap1)
+        elif h1 > 12 or h1 == 0 or h1 == 12:
+            s = h1
+        elif 1 <= h1 <= 6 or (evening and 4 <= h1 <= 11):
+            s = h1 + 12
+        else:
+            s = h1
+        if ap2:
+            e = with_meridiem(h2, ap2)
+        elif h2 > 12:
+            e = h2
+        else:
+            e = next((c for c in (h2 % 12, h2 % 12 + 12) if c * 60 + m2 > s * 60 + m1), h2)
+    a, b = s * 60 + m1, e * 60 + m2
+    return (a, b) if b > a else None
+
+
+def _tt_label(raw):
+    """Words next to a time range ("Prep", "Lessons") -> a short tidy label ('' if none)."""
+    text = _DAY_RE.sub(' ', raw or '')
+    words = [w for w in re.split(r'[\s,;:|/()]+', text) if w]
+    while words and (words[0].lower() in _LABEL_NOISE or not re.search(r'[A-Za-z]', words[0])):
+        words.pop(0)
+    while words and (words[-1].lower() in _LABEL_NOISE or not re.search(r'[A-Za-z]', words[-1])):
+        words.pop()
+    label = ' '.join(words)
+    if label.isupper() or label.islower():
+        label = label.title()
+    return clean_slot_label(label)
+
+
+def _tt_days(line):
+    """(sorted day numbers found in the line, the line with the day words blanked out)."""
+    days = set()
+
+    def span(m):
+        a = _DAY_INDEX[m.group(1)[:3].lower()]
+        b = _DAY_INDEX[m.group(2)[:3].lower()]
+        days.update(range(a, b + 1) if a <= b else list(range(a, 7)) + list(range(0, b + 1)))
+        return ' '
+
+    rest = _DAY_SPAN_RE.sub(span, line)
+
+    def one(m):
+        days.add(_DAY_INDEX[m.group(1)[:3].lower()])
+        return ' '
+
+    rest = _DAY_RE.sub(one, rest)
+    return sorted(days), rest
+
+
+def parse_timetable_text(text):
+    """Find day + time intervals in free text.
+    Returns (rows, skipped): rows = [{'weekday', 'start', 'end', 'label'}] sorted by day/time;
+    skipped = lines that had a time range but no day to attach it to."""
+    rows, skipped, seen, current_days = [], [], set(), []
+    for raw in (text or '').replace('\r', '\n').split('\n'):
+        line = raw.replace('–', '-').replace('—', '-').replace('−', '-').replace(' ', ' ')
+        line = re.sub(r'(?<![\d:.])(\d{1,2}):(\d)(?![\d:])', r'\1-\2', line)    # "7:9" -> "7-9"
+        if not line.strip():
+            continue
+        days, rest = _tt_days(line)
+        found = list(_RANGE_RE.finditer(rest))
+        if days and not found:
+            current_days = days                       # "Tuesday" on its own line: a heading
+            continue
+        if not found:
+            continue
+        use_days = days or current_days
+        if not use_days:
+            skipped.append(raw.strip()[:120])
+            continue
+        prev_end, labels = 0, []
+        for m in found:
+            labels.append(_tt_label(rest[prev_end:m.start()]))
+            prev_end = m.end()
+        if not labels[-1]:
+            labels[-1] = _tt_label(rest[prev_end:])
+        for m, label in zip(found, labels):
+            g = m.groups()
+            span = _resolve_range(g[0], g[1], g[2], g[3], g[4], g[5],
+                                  evening=bool(_EVENING_RE.search(label)))
+            if not span:
+                skipped.append(raw.strip()[:120])
+                continue
+            for d in use_days:
+                key = (d, span[0], span[1])
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append({'weekday': d, 'start': min_to_hhmm(span[0]),
+                             'end': min_to_hhmm(span[1]), 'label': label})
+    rows.sort(key=lambda r: (r['weekday'], r['start']))
+    return rows, skipped
 
 
 # ─────────────────────────────────────────────
@@ -989,7 +1145,7 @@ def parse_student_text(text, default_class=''):
     return rows, skipped
 
 
-def extract_pdf_text(data):
+def extract_pdf_text(data, fallback='paste the names instead'):
     """All the text in a PDF (raises ValueError with a friendly message)."""
     try:
         from pypdf import PdfReader
@@ -1018,7 +1174,7 @@ def extract_pdf_text(data):
     text = '\n'.join(pages)
     if not text.strip():
         raise ValueError('No text found in this PDF — it looks like a scanned picture. '
-                         'Use a PDF saved from Word/Excel, or paste the names instead.')
+                         f'Use a PDF saved from Word/Excel, or {fallback}.')
     return text
 
 
@@ -1563,7 +1719,7 @@ def laptop_signout():
     due = fmt12(slot['end_time'])
     log_activity('laptop_signout', f"Signed out laptop to {st['full_name']} ({st['class_name']}), "
                                    f"due back at {due}")
-    flash(f"Laptop signed out to {st['full_name']}. Slot {slot_label(slot)} — due back by {due}. "
+    flash(f"Laptop signed out to {st['full_name']}. Slot {slot_title(slot)} — due back by {due}. "
           f"Approved by {admin}.", 'success')
     return redirect(url_for('laptop_desk'))
 
@@ -1623,6 +1779,7 @@ def laptop_timetable(sid):
             return redirect(url_for('laptop_students_register'))
         slots = _laptop_slots(conn, sid)
         is_out = _laptop_is_out(conn, sid)
+        pdf = _timetable_pdf_info(conn, sid)
     verdict = check_laptop_access(st['full_name'], slots, bool(st['consent_at']), is_out, now_local)
     days = [[] for _ in range(7)]
     total_min = 0
@@ -1631,7 +1788,7 @@ def laptop_timetable(sid):
         total_min += hhmm_to_min(s['end_time']) - hhmm_to_min(s['start_time'])
     return render_template('laptop_timetable.html', st=st, slots=slots, days=days, verdict=verdict,
                            total_hours=round(total_min / 60, 1), today_wd=now_local.weekday(),
-                           consent_at=st['consent_at'], is_out=is_out)
+                           consent_at=st['consent_at'], is_out=is_out, pdf=pdf)
 
 
 @app.route('/laptops/students/<int:sid>/timetable/add', methods=['POST'])
@@ -1640,6 +1797,7 @@ def laptop_timetable_add(sid):
     days = sorted({d for d in request.form.getlist('days') if d.isdigit()})
     start = (request.form.get('start') or '').strip()
     end = (request.form.get('end') or '').strip()
+    label = clean_slot_label(request.form.get('label'))
     if not days:
         flash('Tick at least one day.', 'danger')
         return _timetable_back(sid)
@@ -1656,18 +1814,20 @@ def laptop_timetable_add(sid):
                 errors.append(err)
             else:
                 planned.append({'weekday': int(d), 'start_time': min_to_hhmm(a),
-                                'end_time': min_to_hhmm(b)})
+                                'end_time': min_to_hhmm(b), 'label': label})
         if errors:
             for e in errors[:3]:
                 flash(e, 'danger')
             flash('Nothing was saved. Fix the problem above and try again.', 'warning')
             return _timetable_back(sid)
-        conn.run_batch([("INSERT INTO laptop_slots (student_id, weekday, start_time, end_time) "
-                         "VALUES (?,?,?,?)", (sid, p['weekday'], p['start_time'], p['end_time']))
+        conn.run_batch([("INSERT INTO laptop_slots (student_id, weekday, start_time, end_time, label) "
+                         "VALUES (?,?,?,?,?)",
+                         (sid, p['weekday'], p['start_time'], p['end_time'], p['label']))
                         for p in planned])
         _reset_consent(conn, sid)
     names = ', '.join(WD_SHORT[p['weekday']] for p in planned)
-    log_activity('timetable_edit', f"Added slot {fmt12(start)}–{fmt12(end)} ({names}) to "
+    log_activity('timetable_edit', f"Added slot {fmt12(start)}–{fmt12(end)}"
+                                   f"{' ' + label if label else ''} ({names}) to "
                                    f"{st['full_name']}'s timetable")
     flash(f'Added {fmt12(start)} – {fmt12(end)} on {names}. Record the student\'s consent '
           f'again before laptops can be signed out.', 'success')
@@ -1691,8 +1851,9 @@ def laptop_timetable_edit(sid, slot_id):
         if err:
             flash(err, 'danger')
             return _timetable_back(sid)
-        conn.execute("UPDATE laptop_slots SET weekday=?, start_time=?, end_time=? WHERE id=?",
-                     (int(wd), min_to_hhmm(a), min_to_hhmm(b), slot_id))
+        conn.execute("UPDATE laptop_slots SET weekday=?, start_time=?, end_time=?, label=? WHERE id=?",
+                     (int(wd), min_to_hhmm(a), min_to_hhmm(b),
+                      clean_slot_label(request.form.get('label')), slot_id))
         _reset_consent(conn, sid)
     log_activity('timetable_edit',
                  f"Changed {st['full_name']}'s slot {WD_SHORT[int(mine['weekday'])]} "
@@ -1768,6 +1929,218 @@ def laptop_student_edit(sid):
                      "serial_no=? WHERE id=?", (name, cls, model, serial, sid))
     log_activity('laptop_student_edit', f'Updated details of {name} ({cls})')
     flash('Details saved.', 'success')
+    return _timetable_back(sid)
+
+
+# — the student's timetable PDF, and reading intervals from it —
+# The PDF is kept in the database (the web host's disk is wiped on every deploy).
+# Reading intervals out of it is only a shortcut: the admin always checks a preview
+# and can edit every row before anything is saved, and the student's consent is
+# asked for again afterwards like after any other timetable change.
+
+TIMETABLE_PDF_MAX = 3 * 1024 * 1024          # a timetable PDF is normally well under 1 MB
+
+
+def _timetable_pdf_info(conn, sid):
+    """Details of the saved timetable PDF (never the file itself), or None."""
+    return conn.execute(
+        "SELECT student_id, filename, size, uploaded_by, uploaded_at "
+        "FROM laptop_timetable_files WHERE student_id=?", (sid,)).fetchone()
+
+
+def _tt_preview(st, rows, skipped, source, existing, replace=False):
+    return render_template('laptop_timetable_read.html', st=st, rows=rows, skipped=skipped[:30],
+                           skipped_total=len(skipped), source=source, existing=existing,
+                           replace=replace, weekdays=WEEKDAYS)
+
+
+def _tt_preview_from_text(sid, st, text, source):
+    """Step 1: find the intervals in `text` and show them for checking. Nothing is saved."""
+    found, skipped = parse_timetable_text(text)
+    if not found:
+        flash(f'No days and times were found in {source}. Type the intervals in the box instead, '
+              f'one per line — for example "Tue 11:30-3:20" and "Tue prep 7-9".', 'warning')
+        return _timetable_back(sid)
+    found = found[:MAX_TIMETABLE_ROWS]
+    with get_db() as conn:
+        existing = list(_laptop_slots(conn, sid))
+    rows, ok = [], []
+    for i, r in enumerate(found):
+        row = {'idx': i, 'keep': True, 'weekday': r['weekday'], 'start': r['start'],
+               'end': r['end'], 'label': r['label'], 'problem': '', 'clash': False}
+        err, a, b = validate_slot(r['weekday'], r['start'], r['end'], ok)
+        row['problem'] = err or ''
+        if not err:
+            ok.append({'weekday': r['weekday'], 'start_time': r['start'], 'end_time': r['end']})
+            row['clash'] = bool(validate_slot(r['weekday'], r['start'], r['end'], existing)[0])
+        else:
+            row['keep'] = False
+        rows.append(row)
+    return _tt_preview(st, rows, skipped, source, existing)
+
+
+def _tt_rows_from_form():
+    try:
+        count = min(int(request.form.get('count', 0)), MAX_TIMETABLE_ROWS)
+    except ValueError:
+        count = 0
+    keep = set(request.form.getlist('keep'))
+    return [{'idx': i, 'keep': str(i) in keep,
+             'weekday': request.form.get(f'day_{i}', ''),
+             'start': (request.form.get(f'start_{i}') or '').strip(),
+             'end': (request.form.get(f'end_{i}') or '').strip(),
+             'label': clean_slot_label(request.form.get(f'label_{i}')),
+             'problem': '', 'clash': False} for i in range(count)]
+
+
+@app.route('/laptops/students/<int:sid>/timetable/pdf')
+@login_required
+def laptop_timetable_pdf(sid):
+    with get_db() as conn:
+        st = _laptop_student(conn, sid)
+        row = conn.execute("SELECT filename, data FROM laptop_timetable_files WHERE student_id=?",
+                           (sid,)).fetchone() if st else None
+    if not row:
+        flash('No timetable PDF is attached for this student.', 'warning')
+        return _timetable_back(sid)
+    resp = make_response(bytes(row['data']))
+    resp.headers['Content-Type'] = 'application/pdf'
+    resp.headers['Content-Disposition'] = f'inline; filename="{secure_filename(row["filename"]) or "timetable.pdf"}"'
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    resp.headers['Cache-Control'] = 'private, no-store'
+    return resp
+
+
+@app.route('/laptops/students/<int:sid>/timetable/pdf', methods=['POST'])
+@login_required
+def laptop_timetable_pdf_upload(sid):
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        flash("Choose the student's timetable PDF first.", 'danger')
+        return _timetable_back(sid)
+    data = upload.read()
+    if data[:5] != b'%PDF-':
+        flash('That file is not a PDF. Save the timetable as a PDF and try again.', 'danger')
+        return _timetable_back(sid)
+    if len(data) > TIMETABLE_PDF_MAX:
+        flash(f'That PDF is too large ({len(data) / 1048576:.1f} MB). Please keep it under '
+              f'{TIMETABLE_PDF_MAX // 1048576} MB.', 'danger')
+        return _timetable_back(sid)
+    name = secure_filename(upload.filename) or 'timetable.pdf'
+    if not name.lower().endswith('.pdf'):
+        name += '.pdf'
+    name = name[-100:]
+    admin = current_admin()
+    with get_db() as conn:
+        st = _laptop_student(conn, sid)
+        if not st:
+            flash('Student not found.', 'danger')
+            return redirect(url_for('laptop_students_register'))
+        conn.execute("""
+            INSERT INTO laptop_timetable_files (student_id, filename, size, data, uploaded_by, uploaded_at)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(student_id) DO UPDATE SET filename=excluded.filename, size=excluded.size,
+                data=excluded.data, uploaded_by=excluded.uploaded_by, uploaded_at=excluded.uploaded_at
+        """, (sid, name, len(data), data, admin, datetime.utcnow().isoformat()))
+    log_activity('timetable_pdf', f"Attached timetable PDF ({name}) to {st['full_name']} ({st['class_name']})")
+    flash(f"Timetable PDF attached to {st['full_name']}.", 'success')
+    if 'read' in request.form:
+        try:
+            text = extract_pdf_text(data, fallback='type the intervals in the box instead')
+        except ValueError as e:
+            flash(str(e), 'warning')
+            return _timetable_back(sid)
+        return _tt_preview_from_text(sid, st, text, name)
+    return _timetable_back(sid)
+
+
+@app.route('/laptops/students/<int:sid>/timetable/pdf/delete', methods=['POST'])
+@login_required
+def laptop_timetable_pdf_delete(sid):
+    with get_db() as conn:
+        st = _laptop_student(conn, sid)
+        if not st:
+            flash('Student not found.', 'danger')
+            return redirect(url_for('laptop_students_register'))
+        conn.execute("DELETE FROM laptop_timetable_files WHERE student_id=?", (sid,))
+    log_activity('timetable_pdf', f"Removed the timetable PDF of {st['full_name']} ({st['class_name']})")
+    flash('Timetable PDF removed. The intervals already saved are unchanged.', 'success')
+    return _timetable_back(sid)
+
+
+@app.route('/laptops/students/<int:sid>/timetable/read', methods=['POST'])
+@login_required
+def laptop_timetable_read(sid):
+    pasted = (request.form.get('pasted') or '').strip()
+    with get_db() as conn:
+        st = _laptop_student(conn, sid)
+        if not st:
+            flash('Student not found.', 'danger')
+            return redirect(url_for('laptop_students_register'))
+        saved = None if pasted else conn.execute(
+            "SELECT filename, data FROM laptop_timetable_files WHERE student_id=?", (sid,)).fetchone()
+    if pasted:
+        text, source = pasted[:20000], 'what you typed'
+    elif saved:
+        try:
+            text = extract_pdf_text(bytes(saved['data']),
+                                    fallback='type the intervals in the box instead')
+        except ValueError as e:
+            flash(str(e), 'danger')
+            return _timetable_back(sid)
+        source = saved['filename']
+    else:
+        flash('Attach the timetable PDF first, or type the intervals in the box.', 'danger')
+        return _timetable_back(sid)
+    return _tt_preview_from_text(sid, st, text, source)
+
+
+@app.route('/laptops/students/<int:sid>/timetable/read/apply', methods=['POST'])
+@login_required
+def laptop_timetable_read_apply(sid):
+    """Step 2: save the intervals the admin left ticked (after any edits in the preview)."""
+    rows = _tt_rows_from_form()
+    replace = 'replace' in request.form
+    if not rows:
+        return _timetable_back(sid)
+    with get_db() as conn:
+        st = _laptop_student(conn, sid)
+        if not st:
+            flash('Student not found.', 'danger')
+            return redirect(url_for('laptop_students_register'))
+        existing = list(_laptop_slots(conn, sid))
+        planned, bad = [], 0
+        for r in rows:
+            if not r['keep']:
+                continue
+            err, a, b = validate_slot(r['weekday'], r['start'], r['end'],
+                                      ([] if replace else existing) + planned)
+            r['problem'] = err or ''
+            if err:
+                bad += 1
+            else:
+                planned.append({'weekday': int(r['weekday']), 'start_time': min_to_hhmm(a),
+                                'end_time': min_to_hhmm(b), 'label': r['label']})
+        if not planned and not bad:
+            flash('Tick at least one interval to save.', 'danger')
+            return _tt_preview(st, rows, [], 'your selection', existing, replace)
+        if bad:
+            flash('Nothing was saved. Fix the rows marked in red (or untick them) and try again.',
+                  'danger')
+            return _tt_preview(st, rows, [], 'your selection', existing, replace)
+        stmts = [("DELETE FROM laptop_slots WHERE student_id=?", (sid,))] if replace else []
+        stmts += [("INSERT INTO laptop_slots (student_id, weekday, start_time, end_time, label) "
+                   "VALUES (?,?,?,?,?)",
+                   (sid, p['weekday'], p['start_time'], p['end_time'], p['label']))
+                  for p in planned]
+        conn.run_batch(stmts)
+        _reset_consent(conn, sid)
+    log_activity('timetable_edit',
+                 f"{'Replaced the timetable of' if replace else 'Added intervals to'} "
+                 f"{st['full_name']} ({st['class_name']}): {len(planned)} interval"
+                 f"{'' if len(planned) == 1 else 's'} from the timetable reader")
+    flash(f"{len(planned)} interval{'' if len(planned) == 1 else 's'} saved. Record the student's "
+          f"consent again before laptops can be signed out.", 'success')
     return _timetable_back(sid)
 
 
