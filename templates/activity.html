@@ -34,7 +34,7 @@
     <label>Activity</label>
     <select name="action" class="form-control" onchange="this.form.submit()">
       <option value="">All activity</option>
-      {% for code, m in action_meta.items() %}<option value="{{ code }}" {{ 'selected' if code == f_action else '' }}>{{ m[0] }}</option>{% endfor %}
+      {% for code, m in action_filter_meta.items() %}<option value="{{ code }}" {{ 'selected' if code == f_action else '' }}>{{ m[0] }}</option>{% endfor %}
     </select>
   </div>
   {% if f_admin or f_action %}
