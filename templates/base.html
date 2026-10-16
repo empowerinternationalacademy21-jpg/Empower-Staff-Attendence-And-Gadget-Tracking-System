@@ -28,27 +28,6 @@
   <div class="navbar-links">
     {% if session.get('logged_in') %}
       <a href="{{ url_for('dashboard') }}"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
-      <a href="{{ url_for('staff_list') }}"><i class="fas fa-users"></i> Staff</a>
-
-      <!-- Attendance dropdown -->
-      <div class="nav-dropdown">
-        <a href="{{ url_for('attendance_history') }}" class="nav-dropdown-toggle">
-          <i class="fas fa-calendar-check"></i> Attendance <i class="fas fa-chevron-down nav-caret"></i>
-        </a>
-        <div class="nav-dropdown-menu">
-          <a href="{{ url_for('attendance_history') }}">
-            <i class="fas fa-calendar-day"></i> Daily View
-          </a>
-          <a href="{{ url_for('attendance_monthly') }}">
-            <i class="fas fa-calendar-alt"></i> 12-Month Archive
-          </a>
-          <div class="dropdown-divider"></div>
-          <a href="{{ url_for('attendance_pdf', date=today_date if today_date is defined else '') }}" target="_blank">
-            <i class="fas fa-file-pdf"></i> Print Today's Report
-          </a>
-        </div>
-      </div>
-
       <!-- Tablets dropdown -->
       <div class="nav-dropdown">
         <a href="{{ url_for('tablet_list') }}" class="nav-dropdown-toggle">
@@ -68,15 +47,35 @@
           <a href="{{ url_for('add_tablet') }}">
             <i class="fas fa-plus-circle"></i> Register Tablets
           </a>
+          <a href="{{ url_for('students_register') }}">
+            <i class="fas fa-user-graduate"></i> School Students
+          </a>
+        </div>
+      </div>
+
+      <!-- Laptops dropdown -->
+      <div class="nav-dropdown">
+        <a href="{{ url_for('laptop_desk') }}" class="nav-dropdown-toggle">
+          <i class="fas fa-laptop"></i> Laptops <span class="nav-badge hidden" data-laptop-overdue-count>0</span> <i class="fas fa-chevron-down nav-caret"></i>
+        </a>
+        <div class="nav-dropdown-menu">
+          <a href="{{ url_for('laptop_desk') }}">
+            <i class="fas fa-door-open"></i> Laptop Desk
+          </a>
+          <a href="{{ url_for('laptop_overdue_page') }}">
+            <i class="fas fa-bell"></i> Overdue <span class="nav-badge hidden" data-laptop-overdue-count>0</span>
+          </a>
+          <div class="dropdown-divider"></div>
+          <a href="{{ url_for('laptop_students_register') }}">
+            <i class="fas fa-user-clock"></i> Laptop Students &amp; Timetables
+          </a>
         </div>
       </div>
 
       <a href="{{ url_for('activity') }}"><i class="fas fa-stream"></i> Activity</a>
-      <a href="{{ url_for('gate') }}">Gate</a>
       <a href="{{ url_for('tablet_signout') }}"><i class="fas fa-sign-out-alt"></i> Borrow Tablet</a>
       <a href="{{ url_for('logout') }}" class="btn-logout"><i class="fas fa-sign-in-alt"></i> Logout</a>
     {% else %}
-      <a href="{{ url_for('gate') }}"> Gate Attendance</a>
       <a href="{{ url_for('tablet_signout') }}"> Borrow Tablet</a>
       <a href="{{ url_for('login') }}"><i class="fas fa-lock"></i> Admin Login</a>
     {% endif %}
@@ -85,7 +84,7 @@
 
 <!-- OVERDUE NOTIFICATION BANNER (only when logged in) -->
 {% if session.get('logged_in') %}
-<div id="overdue-banner" class="overdue-banner hidden" data-href="{{ url_for('overdue_tablets') }}" title="Click to see all overdue tablets"></div>
+<div id="overdue-banner" class="overdue-banner hidden" data-href="{{ url_for('overdue_tablets') }}" data-href-laptops="{{ url_for('laptop_overdue_page') }}" title="Click to see everything that is overdue"></div>
 {% endif %}
 
 <!-- FLASH MESSAGES -->
@@ -108,7 +107,7 @@
 <!-- FOOTER -->
 <footer class="footer">
   Empower International Academy
-  <p>&copy; 2026 Empower International Academy — Staff Attendance &amp; Gadget Tracking System</p>
+  <p>&copy; 2026 Empower International Academy — Gadget Tracking System</p>
     <p>&copy; 2026 Emtrixz Technology Company — Powered and Built by &amp; Emtrixz Technology Company</p>
 </footer>
 
