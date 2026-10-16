@@ -44,7 +44,7 @@
     <div class="tt-day {{ 'today' if d == today_wd else '' }} {{ 'weekend' if d >= 5 and not days[d] else '' }}">
       <div class="tt-day-name">{{ DAYS[d][:3] }}{% if d == today_wd %}<small>today</small>{% endif %}</div>
       {% for s in days[d] %}
-      <div class="tt-slot"><i class="far fa-clock"></i> {{ s['start_time']|fmt12 }}<br><span>to {{ s['end_time']|fmt12 }}</span></div>
+      <div class="tt-slot">{% if s['label'] %}<b class="tt-lab">{{ s['label'] }}</b>{% endif %}<i class="far fa-clock"></i> {{ s['start_time']|fmt12 }}<br><span>to {{ s['end_time']|fmt12 }}</span></div>
       {% else %}
       <div class="tt-none">—</div>
       {% endfor %}
@@ -60,7 +60,7 @@
     {% if slots %}
     <div style="overflow-x:auto">
       <table class="data-table">
-        <thead><tr><th>Day</th><th>From</th><th>To</th><th style="text-align:right">Actions</th></tr></thead>
+        <thead><tr><th>Day</th><th>From</th><th>To</th><th>Name</th><th style="text-align:right">Actions</th></tr></thead>
         <tbody>
           {% for s in slots %}
           <tr>
@@ -68,6 +68,7 @@
               {% for d in range(7) %}<option value="{{ d }}" {{ 'selected' if s['weekday']|int == d else '' }}>{{ DAYS[d] }}</option>{% endfor %}</select></td>
             <td><input type="time" name="start" form="f{{ s['id'] }}" value="{{ s['start_time'] }}" class="form-control tt-in" required/></td>
             <td><input type="time" name="end" form="f{{ s['id'] }}" value="{{ s['end_time'] }}" class="form-control tt-in" required/></td>
+            <td><input type="text" name="label" form="f{{ s['id'] }}" value="{{ s['label'] or '' }}" maxlength="40" placeholder="e.g. Prep" class="form-control tt-in"/></td>
             <td style="text-align:right;white-space:nowrap">
               <button class="btn btn-sm btn-primary" form="f{{ s['id'] }}"><i class="fas fa-save"></i> Save</button>
               <button class="btn btn-sm btn-danger" form="d{{ s['id'] }}" onclick="return confirm('Remove this slot?')"><i class="fas fa-trash-alt"></i></button>
@@ -104,9 +105,56 @@
         <div class="form-group"><label>From</label><input type="time" name="start" class="form-control" required/></div>
         <div class="form-group"><label>To</label><input type="time" name="end" class="form-control" required/></div>
       </div>
+      <div class="form-group"><label>Name <small>(optional)</small></label><input type="text" name="label" maxlength="40" placeholder="e.g. Prep, Lessons" class="form-control"/></div>
       <button class="btn btn-primary"><i class="fas fa-plus"></i> Add slot</button>
       <span class="form-note">The same time is added to every ticked day.</span>
     </form>
+  </div>
+</div>
+
+<!-- Timetable PDF + quick entry -->
+<div class="card tt-card">
+  <h3><i class="fas fa-file-pdf"></i> Timetable PDF &amp; quick entry</h3>
+  <div class="tt-cols tt-cols-even">
+    <div>
+      <h4 class="tt-h4">Student's timetable PDF</h4>
+      {% if pdf %}
+      <div class="tt-file">
+        <i class="fas fa-file-pdf"></i>
+        <div>
+          <strong>{{ pdf['filename'] }}</strong>
+          <span>{{ (pdf['size'] / 1024)|round|int }} KB · attached by {{ pdf['uploaded_by'] or 'an admin' }} on {{ pdf['uploaded_at']|fmt_dt }}</span>
+        </div>
+      </div>
+      <div class="tt-actions">
+        <a class="btn btn-sm btn-outline" href="{{ url_for('laptop_timetable_pdf', sid=st['id']) }}" target="_blank" rel="noopener"><i class="fas fa-eye"></i> View PDF</a>
+        <form method="POST" action="{{ url_for('laptop_timetable_read', sid=st['id']) }}" style="display:inline">
+          <button class="btn btn-sm btn-primary"><i class="fas fa-wand-magic-sparkles"></i> Read intervals from it</button>
+        </form>
+        <form method="POST" action="{{ url_for('laptop_timetable_pdf_delete', sid=st['id']) }}" style="display:inline" onsubmit="return confirm('Remove this PDF? The saved intervals stay as they are.')">
+          <button class="btn btn-sm btn-danger"><i class="fas fa-trash-alt"></i></button>
+        </form>
+      </div>
+      <p class="form-note" style="margin-top:.8rem">To replace it, attach a new PDF below.</p>
+      {% else %}
+      <p class="tt-sub">No PDF attached yet. The student saves their timetable as a PDF and the admin attaches it here.</p>
+      {% endif %}
+      <form method="POST" action="{{ url_for('laptop_timetable_pdf_upload', sid=st['id']) }}" enctype="multipart/form-data" style="margin-top:.8rem">
+        <div class="form-group"><input type="file" name="file" accept="application/pdf,.pdf" class="form-control" required/></div>
+        <label class="checkbox-label" style="margin-bottom:.7rem"><input type="checkbox" name="read" checked/> Also read the intervals from it</label>
+        <button class="btn btn-outline"><i class="fas fa-paperclip"></i> {{ 'Replace PDF' if pdf else 'Attach PDF' }}</button>
+        <span class="form-note">PDF only, up to 3 MB. Text PDFs (saved from Word/Excel/Docs) can be read; a scanned picture can only be attached.</span>
+      </form>
+    </div>
+    <div>
+      <h4 class="tt-h4">Type the intervals</h4>
+      <p class="tt-sub" style="margin-bottom:.6rem">One per line. You get a preview to check before anything is saved.</p>
+      <form method="POST" action="{{ url_for('laptop_timetable_read', sid=st['id']) }}">
+        <textarea name="pasted" rows="6" class="form-control tt-mono" placeholder="Tue 11:30-3:20&#10;Tue prep 7-9&#10;Mon-Fri prep 7:9&#10;Wed 8am-10am, 2pm-4pm" required></textarea>
+        <p class="form-note" style="margin:.5rem 0 .8rem">Times with no am/pm: 7–11 is morning, 1–6 is afternoon, and a <strong>prep</strong> (or evening/night/study) interval is read as evening — so <em>prep 7-9</em> means 7–9 PM. You can correct anything in the preview.</p>
+        <button class="btn btn-primary"><i class="fas fa-eye"></i> Preview intervals</button>
+      </form>
+    </div>
   </div>
 </div>
 
@@ -155,6 +203,15 @@
   .tt-day-name small { font-size: .65rem; color: var(--green); text-transform: uppercase; letter-spacing: .5px; }
   .tt-slot { background: linear-gradient(135deg, var(--navy), #0b5d8f); color: #fff; border-radius: 10px; padding: .45rem .6rem; font-size: .8rem; font-weight: 700; margin-bottom: .4rem; line-height: 1.35; }
   .tt-slot span { font-weight: 500; opacity: .85; }
+  .tt-lab { display: block; font-size: .68rem; text-transform: uppercase; letter-spacing: .5px; color: #9fe8c0; margin-bottom: .1rem; }
+  .tt-h4 { margin: 0 0 .5rem; font-size: .92rem; color: var(--navy); }
+  .tt-cols-even { grid-template-columns: 1fr 1fr; }
+  .tt-file { display: flex; gap: .8rem; align-items: center; border: 1px solid var(--ink-rule); border-radius: 12px; padding: .7rem .9rem; margin-bottom: .7rem; background: var(--white); }
+  .tt-file > i { font-size: 1.6rem; color: #c0392b; }
+  .tt-file strong { display: block; font-size: .9rem; word-break: break-all; }
+  .tt-file span { font-size: .78rem; color: var(--ink-mid); }
+  .tt-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+  .tt-mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .88rem; }
   .tt-none { color: var(--ink-ghost, #aab); text-align: center; padding-top: .6rem; }
   .tt-cols { display: grid; grid-template-columns: 1.5fr 1fr; gap: 1.2rem; margin-bottom: 1.2rem; align-items: start; }
   .tt-card { padding: 1.3rem 1.4rem; margin-bottom: 1.2rem; }
@@ -171,7 +228,7 @@
   .tt-quick button { border: 1.5px solid var(--ink-rule); background: var(--white); color: var(--navy); border-radius: 999px; padding: .2rem .7rem; font-size: .76rem; font-weight: 600; cursor: pointer; }
   .tt-consent-form { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; justify-content: space-between; }
   .tt-consent-form .checkbox-label { flex: 1; min-width: 260px; }
-  @media (max-width: 1000px) { .tt-grid { grid-template-columns: repeat(4, 1fr); } .tt-status { grid-template-columns: 1fr; } .tt-cols { grid-template-columns: 1fr; } }
+  @media (max-width: 1000px) { .tt-grid { grid-template-columns: repeat(4, 1fr); } .tt-status { grid-template-columns: 1fr; } .tt-cols, .tt-cols-even { grid-template-columns: 1fr; } }
   @media (max-width: 560px) { .tt-grid { grid-template-columns: repeat(2, 1fr); } }
 </style>
 <script>
