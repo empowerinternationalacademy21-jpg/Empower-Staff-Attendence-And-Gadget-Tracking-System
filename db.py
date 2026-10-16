@@ -236,6 +236,15 @@ CREATE TABLE IF NOT EXISTS laptop_slots (
 
 CREATE INDEX IF NOT EXISTS idx_laptop_slots_student ON laptop_slots(student_id);
 
+CREATE TABLE IF NOT EXISTS laptop_timetable_files (
+    student_id INTEGER PRIMARY KEY REFERENCES laptop_students(id),
+    filename TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    data BLOB NOT NULL,
+    uploaded_by TEXT,
+    uploaded_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS laptop_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     student_id INTEGER NOT NULL REFERENCES laptop_students(id),
@@ -260,6 +269,7 @@ MIGRATIONS = [
     ("tablet_transactions", "signed_out_by", "TEXT"),
     ("tablet_transactions", "signed_back_by", "TEXT"),
     ("tablet_transactions", "took_usb", "INTEGER DEFAULT 0"),
+    ("laptop_slots", "label", "TEXT DEFAULT ''"),     # e.g. "Prep", "Lessons"
 ]
 
 
