@@ -1,0 +1,92 @@
+{% extends 'base.html' %}
+{% block title %}Check the intervals — {{ st['full_name'] }} - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><i class="fas fa-wand-magic-sparkles"></i> Check the intervals before saving</h1>
+    <p class="rg-sub">Read from <strong>{{ source }}</strong> for <strong>{{ st['full_name'] }}</strong> ({{ st['class_name'] or '—' }}). Nothing has been saved yet — fix any day, time or name, untick rows you don't want, then save. Times are shown in school time; check the AM/PM carefully (the time boxes show your device's format).</p>
+  </div>
+  <a href="{{ url_for('laptop_timetable', sid=st['id']) }}" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Cancel</a>
+</div>
+
+<form method="POST" action="{{ url_for('laptop_timetable_read_apply', sid=st['id']) }}">
+  <input type="hidden" name="count" value="{{ rows|length }}"/>
+  <section class="section">
+    <div class="card" style="overflow-x:auto">
+      <table class="data-table">
+        <thead><tr>
+          <th style="width:36px"><input type="checkbox" id="selAll" checked title="Select all"/></th>
+          <th style="width:150px">Day</th><th style="width:140px">From</th><th style="width:140px">To</th><th>Name</th><th>Check</th>
+        </tr></thead>
+        <tbody>
+          {% for r in rows %}
+          <tr class="{{ 'ri-bad' if r['problem'] else '' }}">
+            <td><input type="checkbox" name="keep" value="{{ r['idx'] }}" class="rowChk" {{ 'checked' if r['keep'] else '' }}/></td>
+            <td><select name="day_{{ r['idx'] }}" class="form-control ri-cell">
+              {% for d in range(7) %}<option value="{{ d }}" {{ 'selected' if r['weekday']|string == d|string else '' }}>{{ weekdays[d] }}</option>{% endfor %}</select></td>
+            <td><input type="time" name="start_{{ r['idx'] }}" value="{{ r['start'] }}" class="form-control ri-cell" required/></td>
+            <td><input type="time" name="end_{{ r['idx'] }}" value="{{ r['end'] }}" class="form-control ri-cell" required/></td>
+            <td><input type="text" name="label_{{ r['idx'] }}" value="{{ r['label'] }}" maxlength="40" placeholder="(none)" class="form-control ri-cell"/></td>
+            <td>
+              {% if r['problem'] %}<span class="badge badge-red">{{ r['problem'] }}</span>
+              {% elif r['clash'] %}<span class="badge badge-yellow">Overlaps a slot already saved</span>
+              {% else %}<span class="badge badge-green">{{ r['start']|fmt12 }} – {{ r['end']|fmt12 }}</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% if skipped %}
+  <details class="ri-skipped">
+    <summary>{{ skipped_total }} line{{ '' if skipped_total == 1 else 's' }} had a time but no day, so {{ 'it was' if skipped_total == 1 else 'they were' }} left out</summary>
+    <ul>{% for l in skipped %}<li>{{ l }}</li>{% endfor %}</ul>
+    {% if skipped_total > skipped|length %}<p class="ri-muted">…and {{ skipped_total - skipped|length }} more.</p>{% endif %}
+    <p class="ri-muted">If any of these is a real interval, type it with its day on the timetable page (for example "Tue 11:30-3:20").</p>
+  </details>
+  {% endif %}
+
+  <div class="card tt-replace">
+    {% if existing %}
+    <label class="checkbox-label"><input type="checkbox" name="replace" {{ 'checked' if replace else '' }}/> <span><strong>Replace</strong> the {{ existing|length }} slot{{ '' if existing|length == 1 else 's' }} {{ st['full_name'] }} already has with the ticked intervals</span></label>
+    <p class="ri-muted" style="margin:.4rem 0 0 1.7rem">Leave this unticked to add the intervals to the current timetable instead.</p>
+    {% else %}
+    <span class="ri-muted"><i class="fas fa-info-circle"></i> {{ st['full_name'] }} has no slots yet, so these will become the whole timetable.</span>
+    {% endif %}
+  </div>
+
+  <div class="ri-actions">
+    <span class="ri-muted" id="selCount"></span>
+    <button class="btn btn-primary btn-lg"><i class="fas fa-check"></i> Save selected intervals</button>
+  </div>
+  <p class="ri-muted">After saving, record the student's consent again on the timetable page — laptops cannot be signed out until then.</p>
+</form>
+
+<style>
+  .rg-sub { margin: .35rem 0 0; font-size: .88rem; color: var(--ink-light); max-width: 760px; }
+  .ri-muted { color: var(--ink-light); font-size: .82rem; }
+  .ri-cell { padding: .4rem .6rem; font-size: .88rem; }
+  tr.ri-bad td { background: #fff5f6; }
+  .ri-skipped { margin: 1rem 0; font-size: .85rem; color: var(--ink-mid); }
+  .ri-skipped summary { cursor: pointer; font-weight: 600; }
+  .ri-skipped ul { margin: .6rem 0; padding-left: 1.2rem; max-height: 180px; overflow: auto; }
+  .tt-replace { padding: 1rem 1.3rem; margin-top: 1rem; }
+  .ri-actions { display: flex; align-items: center; justify-content: space-between; margin: 1.2rem 0 .6rem; }
+</style>
+<script>
+(function () {
+  var all = document.getElementById('selAll'), boxes = document.querySelectorAll('.rowChk'),
+      count = document.getElementById('selCount');
+  function refresh() {
+    var n = 0; boxes.forEach(function (b) { if (b.checked) n++; });
+    count.textContent = n + ' of ' + boxes.length + ' selected';
+  }
+  all.addEventListener('change', function () { boxes.forEach(function (b) { b.checked = all.checked; }); refresh(); });
+  boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+  refresh();
+})();
+</script>
+{% endblock %}
