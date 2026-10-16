@@ -37,14 +37,14 @@
 
     <div class="title-rule"></div>
 
-    <h1>EIA Staff Attendance<br><span class="h1-accent">&amp; Gadget Tracking</span><br>System</h1>
+    <h1>EIA Gadget<br><span class="h1-accent">Tracking</span><br>System</h1>
 
-    <p class="hero-p">A comprehensive management platform for staff attendance and tablet lending.</p>
+    <p class="hero-p">Tablet lending and timetable-controlled access to students' personal laptops.</p>
 
     <div class="stat-strip">
       <div class="stat-item">
-        <span class="stat-icon"><i class="fas fa-users"></i></span>
-        <span class="stat-label">Staff Monitoring</span>
+        <span class="stat-icon"><i class="fas fa-calendar-check"></i></span>
+        <span class="stat-label">Laptop Timetables</span>
       </div>
       <div class="stat-divider"></div>
       <div class="stat-item">
@@ -59,11 +59,11 @@
     </div>
 
     <div class="hero-buttons">
-      <a href="{{ url_for('gate') }}" class="hbtn hbtn-gate">
-        <span class="hbtn-icon"><i class="fas fa-door-open"></i></span>
+      <a href="{{ url_for('laptop_desk') }}" class="hbtn hbtn-gate">
+        <span class="hbtn-icon"><i class="fas fa-laptop"></i></span>
         <span class="hbtn-text">
-          <span class="hbtn-label">Gate Attendance</span>
-          <span class="hbtn-sub">Clock in / out</span>
+          <span class="hbtn-label">Laptop Desk</span>
+          <span class="hbtn-sub">Sign laptops out / in</span>
         </span>
       </a>
       <a href="{{ url_for('tablet_signout') }}" class="hbtn hbtn-tablet">
@@ -319,7 +319,7 @@
 .hbtn-label { font-size:.93rem; font-weight:600; line-height:1.2; }
 .hbtn-sub   { font-size:.71rem; font-weight:400; opacity:.65; margin-top:1px; }
 
-/* Gold — Gate */
+/* Gold — Laptop desk */
 .hbtn-gate {
   background: linear-gradient(135deg, rgba(212,168,67,0.18), rgba(160,122,32,0.22)) !important;
   border: 1px solid rgba(160,122,32,0.50) !important;
