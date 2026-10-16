@@ -171,26 +171,6 @@ CREATE TABLE IF NOT EXISTS activity_log (
 
 CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
 
-CREATE TABLE IF NOT EXISTS staff (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    phone TEXT,
-    department TEXT,
-    is_active INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS attendance (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    staff_id INTEGER NOT NULL REFERENCES staff(id),
-    date TEXT NOT NULL,
-    status TEXT DEFAULT 'Absent',
-    time_in TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    UNIQUE(staff_id, date)
-);
-
 CREATE TABLE IF NOT EXISTS tablets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tablet_id TEXT NOT NULL UNIQUE,
@@ -217,6 +197,60 @@ CREATE TABLE IF NOT EXISTS tablet_transactions (
     status TEXT DEFAULT 'Borrowed',
     created_at TEXT DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS students (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    full_name TEXT NOT NULL,
+    class_name TEXT NOT NULL DEFAULT '',
+    is_active INTEGER DEFAULT 1,
+    created_by TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_students_unique
+    ON students(full_name COLLATE NOCASE, class_name COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS laptop_students (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    full_name TEXT NOT NULL,
+    class_name TEXT NOT NULL DEFAULT '',
+    laptop_model TEXT DEFAULT '',
+    serial_no TEXT DEFAULT '',
+    is_active INTEGER DEFAULT 1,
+    consent_by TEXT,
+    consent_at TEXT,
+    created_by TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_laptop_students_unique
+    ON laptop_students(full_name COLLATE NOCASE, class_name COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS laptop_slots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL REFERENCES laptop_students(id),
+    weekday INTEGER NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_laptop_slots_student ON laptop_slots(student_id);
+
+CREATE TABLE IF NOT EXISTS laptop_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL REFERENCES laptop_students(id),
+    slot_start TEXT,
+    slot_end TEXT,
+    sign_out_time TEXT NOT NULL,
+    expected_return_time TEXT NOT NULL,
+    sign_back_time TEXT,
+    signed_out_by TEXT,
+    signed_back_by TEXT,
+    status TEXT DEFAULT 'Out',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_laptop_sessions_status ON laptop_sessions(status);
 """
 
 
