@@ -1,0 +1,122 @@
+{% extends 'base.html' %}
+{% block title %}Overdue Laptops - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><i class="fas fa-bell"></i> Overdue Laptops</h1>
+    <p class="od-sub">
+      <span class="od-live"><span class="od-dot"></span> Live</span>
+      Students who kept their laptop past the end of their timetable slot. This page updates by itself. <span id="odChecked"></span>
+    </p>
+  </div>
+  <a href="{{ url_for('laptop_desk') }}" class="btn btn-outline"><i class="fas fa-door-open"></i> Laptop Desk</a>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card stat-red"><div class="stat-icon"><i class="fas fa-laptop"></i></div>
+    <div class="stat-info"><span class="stat-number" id="odCount">0</span><span class="stat-label">Overdue Laptops</span></div></div>
+  <div class="stat-card stat-blue"><div class="stat-icon"><i class="fas fa-hourglass-half"></i></div>
+    <div class="stat-info"><span class="stat-number od-small" id="odLongest">—</span><span class="stat-label">Longest Overdue</span></div></div>
+</div>
+
+<section class="section">
+  <div class="card" id="odTableCard" style="overflow-x:auto">
+    <table class="data-table">
+      <thead><tr>
+        <th>Student</th><th>Class</th><th>Laptop</th><th>Timetable Slot</th><th>Signed Out</th>
+        <th>Approved By</th><th>Was Due</th><th>Overdue By</th><th>Action</th>
+      </tr></thead>
+      <tbody id="odBody"></tbody>
+    </table>
+  </div>
+  <div class="empty-state small" id="odEmpty" style="display:none">
+    <i class="fas fa-check-circle" style="color:var(--green)"></i>
+    <p>No overdue laptops — everyone is within their timetable.</p>
+  </div>
+</section>
+
+<noscript><p>Please enable JavaScript to see the overdue list.</p></noscript>
+
+<style>
+  .od-sub { margin: .35rem 0 0; font-size: .85rem; color: var(--ink-light); max-width: 680px; }
+  .od-live { display: inline-flex; align-items: center; gap: .35rem; font-weight: 700; font-size: .72rem; letter-spacing: .6px;
+             text-transform: uppercase; color: var(--green); background: #e6f6ee; padding: .15rem .6rem; border-radius: 999px; margin-right: .5rem; }
+  .od-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: odPulse 1.6s ease-out infinite; }
+  @keyframes odPulse { 0% { box-shadow: 0 0 0 0 rgba(15,166,87,.55); } 100% { box-shadow: 0 0 0 9px rgba(15,166,87,0); } }
+  .stat-number.od-small { font-size: 1.5rem; }
+  .od-who { white-space: nowrap; font-weight: 600; color: var(--navy); }
+  .od-who i { color: var(--green); margin-right: .25rem; }
+  .od-actions { display: flex; gap: .4rem; align-items: center; }
+  @keyframes odNew { 0% { background: #ffd9de; } 100% { background: transparent; } }
+  tr.od-new td { animation: odNew 3s ease-out 1; }
+</style>
+
+<script>
+(function () {
+  var DATA       = {{ overdue|tojson }};
+  var RETURN_URL = "{{ url_for('laptop_return', session_id=0) }}";
+  var TT_URL     = "{{ url_for('laptop_timetable', sid=0) }}";
+  var offset     = {{ server_now_ms }} - Date.now();
+  var seen       = null;
+
+  function esc(v) { var d = document.createElement('div'); d.textContent = (v === null || v === undefined) ? '' : String(v); return d.innerHTML; }
+  function nowMs() { return Date.now() + offset; }
+  function overdueText(dueMs) {
+    if (dueMs === null || dueMs === undefined) return '—';
+    var m = Math.floor((nowMs() - dueMs) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + ' min';
+    if (m < 1440) { var h = Math.floor(m / 60), r = m % 60; return h + ' h' + (r ? ' ' + r + ' min' : ''); }
+    var d = Math.floor(m / 1440), hh = Math.floor((m % 1440) / 60);
+    return d + ' d' + (hh ? ' ' + hh + ' h' : '');
+  }
+
+  function render(list) {
+    var html = '';
+    list.forEach(function (t) {
+      var isNew = seen !== null && seen.indexOf(t.id) === -1;
+      html += '<tr class="row-overdue' + (isNew ? ' od-new' : '') + '">' +
+        '<td><strong>' + esc(t.student) + '</strong></td>' +
+        '<td>' + esc(t['class']) + '</td>' +
+        '<td>' + esc(t.laptop) + '</td>' +
+        '<td>' + esc(t.slot) + '</td>' +
+        '<td>' + esc(t.out) + '</td>' +
+        '<td class="od-who"><i class="fas fa-user-shield"></i>' + (t.by ? esc(t.by) : '—') + '</td>' +
+        '<td>' + esc(t.expected) + '</td>' +
+        '<td><span class="badge badge-red" data-due="' + esc(t.due_ms === null ? '' : t.due_ms) + '">' + esc(overdueText(t.due_ms)) + '</span></td>' +
+        '<td><div class="od-actions"><form method="POST" action="' + RETURN_URL.replace(/0$/, String(t.id)) + '" onsubmit="return confirm(\'Sign this laptop back in?\')">' +
+        '<input type="hidden" name="next" value="overdue"><button class="btn btn-sm btn-primary"><i class="fas fa-undo"></i> Sign In</button></form>' +
+        '<a class="btn btn-sm btn-outline" href="' + TT_URL.replace(/0\/timetable$/, t.student_id + '/timetable') + '"><i class="fas fa-calendar-alt"></i></a></div></td></tr>';
+    });
+    document.getElementById('odBody').innerHTML = html;
+    seen = list.map(function (t) { return t.id; });
+    document.getElementById('odTableCard').style.display = list.length ? '' : 'none';
+    document.getElementById('odEmpty').style.display = list.length ? 'none' : '';
+    document.getElementById('odCount').textContent = list.length;
+    refreshDurations(list);
+  }
+
+  function refreshDurations(list) {
+    document.querySelectorAll('#odBody [data-due]').forEach(function (el) {
+      var v = el.getAttribute('data-due'); el.textContent = overdueText(v === '' ? null : Number(v));
+    });
+    var longest = null;
+    (list || DATA).forEach(function (t) { if (t.due_ms !== null && (longest === null || t.due_ms < longest)) longest = t.due_ms; });
+    document.getElementById('odLongest').textContent = longest === null ? '—' : overdueText(longest);
+  }
+  function stamp() {
+    document.getElementById('odChecked').textContent = 'Last checked ' +
+      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.';
+  }
+
+  render(DATA); stamp();
+  document.addEventListener('tablet-status', function (e) {
+    if (e.detail.server_ms) offset = e.detail.server_ms - Date.now();
+    DATA = e.detail.laptop_overdue || [];
+    render(DATA); stamp();
+  });
+  setInterval(function () { refreshDurations(DATA); }, 15000);
+})();
+</script>
+{% endblock %}

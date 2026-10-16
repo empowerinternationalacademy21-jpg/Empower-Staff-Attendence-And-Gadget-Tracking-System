@@ -1,0 +1,295 @@
+{% extends 'base.html' %}
+{% block title %}Laptop Desk - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><i class="fas fa-laptop"></i> Laptop Desk</h1>
+    <p class="ld-sub">Sign students' personal laptops out and in. A laptop can only leave storage <strong>during the student's own timetable</strong> — nobody, including admins, can override it.</p>
+  </div>
+  <div class="ld-clock" title="School time"><i class="far fa-clock"></i> <span id="ldClock">—</span></div>
+</div>
+
+<!-- Summary -->
+<div class="stat-grid">
+  <div class="stat-card stat-blue"><div class="stat-icon"><i class="fas fa-user-graduate"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ people|length }}</span><span class="stat-label">Students With Laptops</span></div></div>
+  <div class="stat-card stat-green"><div class="stat-icon"><i class="fas fa-door-open"></i></div>
+    <div class="stat-info"><span class="stat-number" id="ldAllowedCount">{{ allowed_now|length }}</span><span class="stat-label">Can Collect Right Now</span></div></div>
+  <div class="stat-card stat-yellow"><div class="stat-icon"><i class="fas fa-laptop-house"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ out_list|length }}</span><span class="stat-label">Laptops Out</span></div></div>
+  <div class="stat-card stat-red"><div class="stat-icon"><i class="fas fa-bell"></i></div>
+    <div class="stat-info"><span class="stat-number" data-live="lap_overdue">{{ overdue_n }}</span><span class="stat-label">Overdue</span></div></div>
+</div>
+
+<div class="ld-grid">
+  <!-- Sign out -->
+  <div class="card ld-card">
+    <h3><i class="fas fa-hand-holding"></i> Sign out a laptop</h3>
+    <div class="ld-approver"><i class="fas fa-user-shield"></i> Recorded as approved by <strong>{{ admin }}</strong></div>
+    <form method="POST" action="{{ url_for('laptop_signout') }}" id="ldForm">
+      <div class="form-group">
+        <label>Student</label>
+        <input type="text" id="ldStudent" class="form-control" placeholder="Type a few letters, e.g. muk gra" autocomplete="off"/>
+        <input type="hidden" name="student_id" id="ldStudentId"/>
+        {% if not people %}<span class="form-note">No laptop students yet — <a href="{{ url_for('laptop_students_register') }}">add them here</a>.</span>{% endif %}
+      </div>
+
+      <div id="ldPanel" class="ld-panel" hidden>
+        <div class="ld-who">
+          <div class="ld-avatar" id="ldAvatar">?</div>
+          <div><strong id="ldName"></strong><div class="ld-meta"><span id="ldClass"></span> · <span id="ldLaptop"></span></div></div>
+          <a id="ldTimetableLink" class="btn btn-sm btn-outline" href="#"><i class="fas fa-calendar-alt"></i> Edit timetable</a>
+        </div>
+        <div id="ldVerdict" class="ld-verdict"></div>
+        <div class="ld-week" id="ldWeek"></div>
+      </div>
+
+      <button class="btn btn-primary btn-lg btn-block" id="ldBtn" disabled><i class="fas fa-laptop"></i> Sign Out Laptop</button>
+      <p class="form-note" style="margin-top:.6rem">The system re-checks the timetable when you press the button, so it can never be bypassed.</p>
+    </form>
+  </div>
+
+  <!-- Eligible now -->
+  <div class="card ld-card">
+    <h3><i class="fas fa-door-open"></i> Can collect right now</h3>
+    <div id="ldChips">
+    {% if allowed_now %}
+    <div class="ld-chips">
+      {% for a in allowed_now %}
+      <button type="button" class="ld-chip" data-id="{{ a['id'] }}">
+        <strong>{{ a['n'] }}</strong><span>{{ a['c'] }} · until {{ a['until'] }}</span>
+      </button>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state small"><i class="far fa-clock"></i><p>Nobody is inside their timetable slot right now (or everyone eligible already has their laptop).</p></div>
+    {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Currently out -->
+<section class="section">
+  <h2 class="section-title"><i class="fas fa-laptop-house"></i> Laptops currently out</h2>
+  {% if out_list %}
+  <div class="card" style="overflow-x:auto">
+    <table class="data-table">
+      <thead><tr><th>Student</th><th>Class</th><th>Laptop</th><th>Slot</th><th>Signed Out</th><th>Approved By</th><th>Due Back</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody>
+        {% for o in out_list %}
+        <tr class="{{ 'row-overdue' if o['overdue'] else '' }}" data-due="{{ o['due_ms'] if o['due_ms'] is not none else '' }}">
+          <td><strong>{{ o['student'] }}</strong></td>
+          <td>{{ o['class'] }}</td>
+          <td>{{ o['laptop'] }}</td>
+          <td>{{ o['slot'] }}</td>
+          <td>{{ o['out'] }}</td>
+          <td><i class="fas fa-user-shield" style="color:var(--green)"></i> {{ o['by'] or '—' }}</td>
+          <td>{{ o['expected'] }}</td>
+          <td class="ld-status">{% if o['overdue'] %}<span class="badge badge-red">OVERDUE</span>{% else %}<span class="badge badge-green">In session</span>{% endif %}</td>
+          <td>
+            <form method="POST" action="{{ url_for('laptop_return', session_id=o['id']) }}" onsubmit="return confirm('Sign this laptop back in?')">
+              <button class="btn btn-sm btn-primary"><i class="fas fa-undo"></i> Sign In</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state small"><i class="fas fa-check-circle" style="color:var(--green)"></i><p>All laptops are in storage.</p></div>
+  {% endif %}
+</section>
+
+<!-- Recent -->
+<section class="section">
+  <h2 class="section-title"><i class="fas fa-history"></i> Recent sessions</h2>
+  {% if recent %}
+  <div class="card" style="overflow-x:auto">
+    <table class="data-table">
+      <thead><tr><th>Student</th><th>Class</th><th>Slot</th><th>Signed Out</th><th>Signed In</th><th>Result</th><th>Out / In By</th></tr></thead>
+      <tbody>
+        {% for r in recent %}
+        <tr>
+          <td><strong>{{ r['student'] }}</strong></td><td>{{ r['class'] }}</td><td>{{ r['slot'] }}</td>
+          <td>{{ r['out'] }}</td><td>{{ r['back'] }}</td>
+          <td>{% if r['late'] %}<span class="badge badge-red">Late</span>{% else %}<span class="badge badge-green">On time</span>{% endif %}</td>
+          <td class="ld-muted">{{ r['by'] or '—' }} / {{ r['back_by'] or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state small"><i class="fas fa-history"></i><p>No completed sessions yet.</p></div>
+  {% endif %}
+</section>
+
+<style>
+  .ld-sub { margin: .35rem 0 0; font-size: .88rem; color: var(--ink-light); max-width: 680px; }
+  .ld-muted { color: var(--ink-light); font-size: .82rem; }
+  .ld-clock { display: inline-flex; align-items: center; gap: .5rem; font-weight: 800; color: var(--navy);
+              background: var(--white); border: 1px solid var(--ink-rule); border-radius: 999px; padding: .5rem 1rem; }
+  .ld-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 1.2rem; margin: 1.4rem 0; align-items: start; }
+  .ld-card { padding: 1.3rem 1.4rem; }
+  .ld-card h3 { margin: 0 0 .9rem; font-size: 1rem; color: var(--navy); }
+  .ld-card h3 i { color: var(--green); margin-right: .4rem; }
+  .ld-approver { font-size: .8rem; color: var(--ink-mid); background: var(--navy-ghost, #eef1f8); border-radius: 8px; padding: .5rem .7rem; margin-bottom: 1rem; }
+  .ld-panel { border: 1px solid var(--ink-rule); border-radius: 14px; padding: 1rem; margin: .4rem 0 1rem; background: #fbfcff; }
+  .ld-who { display: flex; align-items: center; gap: .8rem; margin-bottom: .8rem; }
+  .ld-who > div:nth-child(2) { flex: 1; min-width: 0; }
+  .ld-avatar { width: 42px; height: 42px; border-radius: 50%; background: linear-gradient(135deg, var(--navy), var(--green)); color: #fff;
+               display: flex; align-items: center; justify-content: center; font-weight: 800; flex: none; }
+  .ld-meta { font-size: .8rem; color: var(--ink-light); }
+  .ld-verdict { border-radius: 10px; padding: .7rem .9rem; font-size: .88rem; font-weight: 600; margin-bottom: .8rem; display: flex; gap: .6rem; }
+  .ld-verdict.ok  { background: #e6f6ee; color: #0b7a47; border: 1px solid #b6e2cb; }
+  .ld-verdict.bad { background: #fde8ea; color: #a31f2b; border: 1px solid #f3b9bf; }
+  .ld-week { display: grid; gap: .3rem; }
+  .ld-day { display: flex; align-items: center; gap: .7rem; font-size: .82rem; padding: .3rem .6rem; border-radius: 8px; background: #f3f5fa; color: var(--ink-mid); }
+  .ld-day b { width: 34px; color: var(--navy); }
+  .ld-day.today { background: #e8f0fb; }
+  .ld-day.now { background: #e6f6ee; color: #0b7a47; font-weight: 700; }
+  .ld-day .sep { color: var(--ink-ghost, #aab); }
+  .ld-chips { display: grid; gap: .5rem; }
+  .ld-chip { text-align: left; border: 1.5px solid var(--ink-rule); background: var(--white); border-radius: 12px; padding: .6rem .8rem;
+             cursor: pointer; display: flex; flex-direction: column; font-size: .9rem; color: var(--navy); }
+  .ld-chip span { font-size: .76rem; color: var(--ink-light); }
+  .ld-chip:hover { border-color: var(--green); background: #f2fbf6; }
+  @media (max-width: 900px) { .ld-grid { grid-template-columns: 1fr; } }
+</style>
+
+<script src="{{ url_for('static', filename='js/student-picker.js') }}"></script>
+<script>
+(function () {
+  var PEOPLE = {{ people|tojson }};
+  var PRE = {{ preselect|tojson }};
+  var TZ = {{ tz_name|tojson }};
+  var offset = {{ server_now_ms }} - Date.now();
+  var DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  var DAYS_FULL = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  var $ = function (id) { return document.getElementById(id); };
+  var current = null;
+
+  function esc(v) { var d = document.createElement('div'); d.textContent = v == null ? '' : String(v); return d.innerHTML; }
+  function toMin(t) { var p = t.split(':'); return (+p[0]) * 60 + (+p[1]); }
+  function fmt12(t) { var m = toMin(t), h = Math.floor(m / 60), mi = m % 60;
+    return ((h % 12) || 12) + ':' + (mi < 10 ? '0' : '') + mi + ' ' + (h < 12 ? 'AM' : 'PM'); }
+  function label(s) { return fmt12(s[1]) + ' – ' + fmt12(s[2]); }
+
+  // school time (follows the SERVER's clock + the school's time zone, not this device)
+  function schoolNow() {
+    var parts = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, weekday: 'short', hour: '2-digit',
+      minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(Date.now() + offset));
+    var o = {}; parts.forEach(function (p) { o[p.type] = p.value; });
+    return { wd: DAYS.indexOf(o.weekday), min: (+o.hour) * 60 + (+o.minute), text: o.weekday + ' ' + o.hour + ':' + o.minute };
+  }
+
+  function nextSlot(slots, now) {
+    for (var ahead = 0; ahead <= 7; ahead++) {
+      var day = (now.wd + ahead) % 7, best = null;
+      slots.forEach(function (s) {
+        if (s[0] !== day) return;
+        if (ahead === 0 && toMin(s[1]) <= now.min) return;
+        if (!best || toMin(s[1]) < toMin(best[1])) best = s;
+      });
+      if (best) return { ahead: ahead, slot: best };
+    }
+    return null;
+  }
+  function describe(n) {
+    var d = DAYS_FULL[n.slot[0]];
+    var when = n.ahead === 0 ? 'today' : n.ahead === 1 ? 'tomorrow' : n.ahead === 7 ? 'next ' + d : d;
+    return when + ', ' + label(n.slot);
+  }
+
+  // same rules as the server (the server is the one that actually enforces them)
+  function check(p) {
+    var now = schoolNow();
+    if (p.out) return { ok: false, msg: p.n + ' already has a laptop signed out.' };
+    if (!p.slots.length) return { ok: false, msg: p.n + ' has no timetable yet. Create one first.' };
+    if (!p.consent) return { ok: false, msg: p.n + "'s timetable has not been agreed yet. Record the student's consent on the timetable page first." };
+    var active = null;
+    p.slots.forEach(function (s) { if (s[0] === now.wd && toMin(s[1]) <= now.min && now.min < toMin(s[2])) active = s; });
+    if (active) return { ok: true, active: active, msg: 'Allowed — slot ' + label(active) + ' today. Laptop must be back by ' + fmt12(active[2]) + '.' };
+    var today = p.slots.filter(function (s) { return s[0] === now.wd; });
+    var nx = nextSlot(p.slots, now), tail = nx ? ' Next slot: ' + describe(nx) + '.' : '';
+    var later = today.filter(function (s) { return toMin(s[1]) > now.min; }).sort(function (a, b) { return toMin(a[1]) - toMin(b[1]); });
+    if (!today.length) return { ok: false, msg: p.n + ' has no laptop slot on ' + DAYS_FULL[now.wd] + '.' + tail };
+    if (later.length) return { ok: false, msg: 'Too early. ' + p.n + "'s slot today starts at " + fmt12(later[0][1]) + '.' };
+    return { ok: false, msg: p.n + "'s slot today has ended." + tail };
+  }
+
+  function showPerson(p) {
+    current = p;
+    var res = check(p), now = schoolNow();
+    $('ldPanel').hidden = false;
+    $('ldStudentId').value = p.id;
+    $('ldAvatar').textContent = (p.n.trim().charAt(0) || '?').toUpperCase();
+    $('ldName').textContent = p.n;
+    $('ldClass').textContent = p.c || '—';
+    $('ldLaptop').textContent = p.laptop;
+    $('ldTimetableLink').href = '{{ url_for("laptop_timetable", sid=0) }}'.replace(/0\/timetable$/, p.id + '/timetable');
+    var v = $('ldVerdict');
+    v.className = 'ld-verdict ' + (res.ok ? 'ok' : 'bad');
+    v.innerHTML = '<i class="fas ' + (res.ok ? 'fa-check-circle' : 'fa-ban') + '"></i><span>' + esc(res.msg) + '</span>';
+    var rows = '';
+    for (var d = 0; d < 7; d++) {
+      p.slots.filter(function (s) { return s[0] === d; }).sort(function (a, b) { return toMin(a[1]) - toMin(b[1]); }).forEach(function (s) {
+        var isNow = res.ok && res.active === s;
+        rows += '<div class="ld-day' + (d === now.wd ? ' today' : '') + (isNow ? ' now' : '') + '"><b>' + DAYS[d] + '</b><span>' + esc(label(s)) + '</span>' +
+                (isNow ? '<span style="margin-left:auto">● open now</span>' : '') + '</div>';
+      });
+    }
+    $('ldWeek').innerHTML = rows || '<div class="ld-muted">No slots set.</div>';
+    $('ldBtn').disabled = !res.ok;
+  }
+
+  function clearPerson() { current = null; $('ldPanel').hidden = true; $('ldStudentId').value = ''; $('ldBtn').disabled = true; }
+
+  var data = PEOPLE.map(function (p) { p.sub = p.laptop; if (p.out) p.tag = 'OUT'; return p; });
+  var picker = window.StudentPicker && StudentPicker.attach({
+    input: $('ldStudent'), data: data, onSelect: showPerson, onClear: clearPerson,
+    noMatch: 'No laptop student with that name'
+  });
+  // "Can collect right now": recomputed from the timetable rules every few seconds,
+  // so students appear and disappear as their slots open and close
+  function renderChips() {
+    var box = $('ldChips'), list = [];
+    PEOPLE.forEach(function (p) { var r = check(p); if (r.ok) list.push({ p: p, until: fmt12(r.active[2]) }); });
+    $('ldAllowedCount').textContent = list.length;
+    if (!list.length) {
+      box.innerHTML = '<div class="empty-state small"><i class="far fa-clock"></i><p>Nobody is inside their timetable slot right now (or everyone eligible already has their laptop).</p></div>';
+      return;
+    }
+    box.innerHTML = '<div class="ld-chips">' + list.map(function (x) {
+      return '<button type="button" class="ld-chip" data-id="' + x.p.id + '"><strong>' + esc(x.p.n) + '</strong><span>' +
+             esc(x.p.c) + ' · until ' + esc(x.until) + '</span></button>';
+    }).join('') + '</div>';
+  }
+  $('ldChips').addEventListener('click', function (e) {
+    var b = e.target.closest('.ld-chip'); if (!b) return;
+    var p = PEOPLE.filter(function (x) { return x.id === +b.dataset.id; })[0];
+    if (p && picker) picker.select(p);
+    $('ldStudent').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  if (PRE !== null && picker) { var pp = PEOPLE.filter(function (x) { return x.id === PRE; })[0]; if (pp) picker.select(pp); }
+
+  // clock + re-check at the moment a slot opens or closes + flip "in session" to OVERDUE on time
+  function tick() {
+    $('ldClock').textContent = schoolNow().text;
+    renderChips();
+    if (current) showPerson(current);
+    var t = Date.now() + offset;
+    document.querySelectorAll('tr[data-due]').forEach(function (tr) {
+      var due = tr.getAttribute('data-due');
+      if (due !== '' && t > +due && !tr.classList.contains('row-overdue')) {
+        tr.classList.add('row-overdue');
+        var c = tr.querySelector('.ld-status'); if (c) c.innerHTML = '<span class="badge badge-red">OVERDUE</span>';
+      }
+    });
+  }
+  tick(); setInterval(tick, 15000);
+})();
+</script>
+{% endblock %}

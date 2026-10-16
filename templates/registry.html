@@ -1,0 +1,214 @@
+{% extends 'base.html' %}
+{% block title %}{{ cfg.title }} - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><i class="fas {{ cfg.icon }}"></i> {{ cfg.title }}</h1>
+    <p class="rg-sub">{{ cfg.blurb }}</p>
+  </div>
+  {% if cfg.laptops %}
+  <a href="{{ url_for('laptop_desk') }}" class="btn btn-primary"><i class="fas fa-door-open"></i> Laptop Desk</a>
+  {% else %}
+  <a href="{{ url_for('tablet_signout') }}" class="btn btn-primary"><i class="fas fa-hand-holding"></i> Tablet Sign-Out</a>
+  {% endif %}
+</div>
+
+<!-- Summary -->
+<div class="stat-grid">
+  <div class="stat-card stat-blue">
+    <div class="stat-icon"><i class="fas {{ cfg.icon }}"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ grand_total }}</span><span class="stat-label">Students Registered</span></div>
+  </div>
+  <div class="stat-card stat-yellow">
+    <div class="stat-icon"><i class="fas fa-layer-group"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ classes|length }}</span><span class="stat-label">Classes</span></div>
+  </div>
+  {% if cfg.laptops and stats %}
+  <div class="stat-card stat-green">
+    <div class="stat-icon"><i class="fas fa-check-double"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ stats['ready'] or 0 }}</span><span class="stat-label">Timetable Agreed</span></div>
+  </div>
+  <div class="stat-card stat-red">
+    <div class="stat-icon"><i class="fas fa-hourglass-half"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ (stats['awaiting'] or 0) + (stats['no_timetable'] or 0) }}</span><span class="stat-label">Not Ready to Sign Out</span></div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Add + Import -->
+<div class="rg-grid">
+  <div class="card rg-card">
+    <h3><i class="fas fa-user-plus"></i> Add a student</h3>
+    <form method="POST" action="{{ url_for(cfg.add) }}">
+      <div class="form-group">
+        <label>Full name *</label>
+        <input type="text" name="name" class="form-control" placeholder="e.g. Mukasa Grace" required/>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Class *</label>
+          <input type="text" name="cls" class="form-control" list="class-list" placeholder="e.g. P.5" required/>
+          <datalist id="class-list">{% for c, n in classes %}{% if c != '(no class)' %}<option value="{{ c }}">{% endif %}{% endfor %}</datalist>
+        </div>
+        {% if cfg.laptops %}
+        <div class="form-group">
+          <label>Laptop (brand / model)</label>
+          <input type="text" name="laptop_model" class="form-control" placeholder="e.g. HP ProBook 450"/>
+        </div>
+        {% endif %}
+      </div>
+      {% if cfg.laptops %}
+      <div class="form-group">
+        <label>Serial number</label>
+        <input type="text" name="serial_no" class="form-control" placeholder="Printed under the laptop"/>
+      </div>
+      {% endif %}
+      <button class="btn btn-primary"><i class="fas fa-plus"></i> Add to register</button>
+      {% if cfg.laptops %}<span class="form-note">After adding, set the student's timetable.</span>{% endif %}
+    </form>
+  </div>
+
+  <div class="card rg-card">
+    <h3><i class="fas fa-file-pdf"></i> Add many from a PDF</h3>
+    <form method="POST" action="{{ url_for(cfg.import) }}" enctype="multipart/form-data">
+      <div class="form-group">
+        <label>Class list (PDF)</label>
+        <input type="file" name="file" class="form-control" accept=".pdf,.csv,.txt"/>
+      </div>
+      <div class="form-group">
+        <label>Class for names that have none</label>
+        <input type="text" name="default_class" class="form-control" list="class-list" placeholder="Optional, e.g. P.5"/>
+      </div>
+      <details class="rg-paste">
+        <summary>…or paste the names instead</summary>
+        <textarea name="pasted" class="form-control" rows="5" placeholder="One student per line, e.g.&#10;Mukasa Grace  P.5&#10;Okello John Paul  P.5"></textarea>
+      </details>
+      <button class="btn btn-primary"><i class="fas fa-search"></i> Read file &amp; preview</button>
+      <span class="form-note">You check the names before anything is saved.</span>
+    </form>
+  </div>
+</div>
+
+<!-- Search + class filter -->
+<section class="section">
+  <form method="GET" class="rg-search">
+    <input type="search" name="q" value="{{ q }}" class="form-control" placeholder="Search by name…"/>
+    {% if cls %}<input type="hidden" name="cls" value="{{ cls }}"/>{% endif %}
+    <button class="btn btn-outline"><i class="fas fa-search"></i> Search</button>
+    {% if q or cls %}<a href="{{ url_for(cfg.page) }}" class="btn btn-outline">Clear</a>{% endif %}
+  </form>
+
+  {% if classes %}
+  <div class="rg-chips">
+    <a href="{{ url_for(cfg.page, q=q) }}" class="rg-chip {{ '' if cls else 'on' }}">All <span>{{ grand_total }}</span></a>
+    {% for c, n in classes %}
+    <a href="{{ url_for(cfg.page, cls=(c if c != '(no class)' else ''), q=q) }}" class="rg-chip {{ 'on' if cls and c|lower == cls|lower else '' }}">{{ c }} <span>{{ n }}</span></a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if rows %}
+  <form method="POST" action="{{ url_for(cfg.remove) }}" id="bulkForm">
+    <input type="hidden" name="q" value="{{ q }}"/><input type="hidden" name="cls" value="{{ cls }}"/>
+    <div class="card" style="overflow-x:auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width:36px"><input type="checkbox" id="selAll" title="Select all on this page"/></th>
+            <th>Student</th><th>Class</th>
+            {% if cfg.laptops %}<th>Laptop</th><th>Timetable</th>{% endif %}
+            <th>Added</th><th style="text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td><input type="checkbox" name="ids" value="{{ r['id'] }}" class="rowChk"/></td>
+            <td><strong>{{ r['full_name'] }}</strong></td>
+            <td><span class="badge badge-blue">{{ r['class_name'] or '—' }}</span></td>
+            {% if cfg.laptops %}
+            <td>{{ r['laptop_model'] or '—' }}{% if r['serial_no'] %}<br><small class="rg-muted">S/N {{ r['serial_no'] }}</small>{% endif %}</td>
+            <td>
+              {% if not r['slot_count'] %}<span class="badge badge-red">No timetable</span>
+              {% elif not r['consent_at'] %}<span class="badge badge-yellow">Awaiting consent</span>
+              {% else %}<span class="badge badge-green">Agreed · {{ r['slot_count'] }} slot{{ '' if r['slot_count'] == 1 else 's' }}</span>{% endif %}
+              {% if r['is_out'] %}<span class="badge badge-yellow">Laptop out</span>{% endif %}
+            </td>
+            {% endif %}
+            <td class="rg-muted">{{ r['created_at']|fmt_dt }}</td>
+            <td style="text-align:right;white-space:nowrap">
+              {% if cfg.laptops %}<a class="btn btn-sm btn-outline" href="{{ url_for('laptop_timetable', sid=r['id']) }}"><i class="fas fa-calendar-alt"></i> Timetable</a>{% endif %}
+              <button type="submit" name="only" value="{{ r['id'] }}" class="btn btn-sm btn-danger"
+                      onclick="return confirm('Remove {{ r['full_name']|e }} from the register?')"><i class="fas fa-user-minus"></i> Remove</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="rg-bulk">
+      <span class="rg-muted" id="selCount">0 selected</span>
+      <button type="submit" class="btn btn-sm btn-danger" id="bulkBtn" disabled
+              onclick="return confirm('Remove the selected students from the register?')"><i class="fas fa-user-minus"></i> Remove selected</button>
+    </div>
+  </form>
+
+  {% if pages > 1 %}
+  <div class="rg-pages">
+    {% if page > 1 %}<a class="btn btn-sm btn-outline" href="{{ url_for(cfg.page, page=page-1, q=q, cls=cls) }}">‹ Previous</a>{% endif %}
+    <span>Page {{ page }} of {{ pages }} · {{ total }} students</span>
+    {% if page < pages %}<a class="btn btn-sm btn-outline" href="{{ url_for(cfg.page, page=page+1, q=q, cls=cls) }}">Next ›</a>{% endif %}
+  </div>
+  {% endif %}
+  {% else %}
+  <div class="empty-state small">
+    <i class="fas {{ cfg.icon }}"></i>
+    <p>{% if q or cls %}No students match that search.{% else %}No students registered yet. Add one above or upload a class list.{% endif %}</p>
+  </div>
+  {% endif %}
+</section>
+
+<style>
+  .rg-sub { margin: .35rem 0 0; font-size: .88rem; color: var(--ink-light); max-width: 640px; }
+  .rg-muted { color: var(--ink-light); font-size: .82rem; }
+  .rg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin: 1.4rem 0 .4rem; }
+  .rg-card { padding: 1.3rem 1.4rem; }
+  .rg-card h3 { margin: 0 0 1rem; font-size: 1rem; color: var(--navy); }
+  .rg-card h3 i { color: var(--green); margin-right: .4rem; }
+  .rg-paste { margin: .2rem 0 1rem; font-size: .85rem; color: var(--ink-mid); }
+  .rg-paste summary { cursor: pointer; font-weight: 600; margin-bottom: .5rem; }
+  .rg-search { display: flex; gap: .6rem; margin: 1.4rem 0 1rem; flex-wrap: wrap; }
+  .rg-search .form-control { flex: 1; min-width: 200px; }
+  .rg-chips { display: flex; flex-wrap: wrap; gap: .45rem; margin-bottom: 1rem; }
+  .rg-chip { display: inline-flex; align-items: center; gap: .45rem; padding: .3rem .8rem; border-radius: 999px;
+             border: 1.5px solid var(--ink-rule); background: var(--white); color: var(--navy);
+             font-size: .8rem; font-weight: 700; text-decoration: none; }
+  .rg-chip span { background: var(--navy-ghost, #eef1f8); border-radius: 999px; padding: 0 .45rem; font-size: .72rem; }
+  .rg-chip.on, .rg-chip:hover { background: var(--navy); color: var(--white); border-color: var(--navy); }
+  .rg-chip.on span, .rg-chip:hover span { background: rgba(255,255,255,.22); color: #fff; }
+  .rg-bulk { display: flex; align-items: center; justify-content: space-between; margin-top: .8rem; }
+  .rg-pages { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 1rem; font-size: .85rem; color: var(--ink-mid); }
+  @media (max-width: 800px) { .rg-grid { grid-template-columns: 1fr; } }
+</style>
+
+<script>
+(function () {
+  var all = document.getElementById('selAll');
+  var boxes = document.querySelectorAll('.rowChk');
+  var btn = document.getElementById('bulkBtn');
+  var count = document.getElementById('selCount');
+  function refresh() {
+    var n = 0; boxes.forEach(function (b) { if (b.checked) n++; });
+    if (count) count.textContent = n + ' selected';
+    if (btn) btn.disabled = n === 0;
+  }
+  if (all) all.addEventListener('change', function () {
+    boxes.forEach(function (b) { b.checked = all.checked; }); refresh();
+  });
+  boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+  refresh();
+})();
+</script>
+
+{% endblock %}

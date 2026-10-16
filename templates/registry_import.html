@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+{% block title %}Check the list - {{ cfg.title }}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><i class="fas fa-file-import"></i> Check the list before saving</h1>
+    <p class="rg-sub">Read from <strong>{{ source }}</strong> for the <strong>{{ cfg.title }}</strong> register. Nothing has been saved yet — fix any names or classes, untick rows you don't want, then confirm.</p>
+  </div>
+  <a href="{{ url_for(cfg.page) }}" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Cancel</a>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card stat-green"><div class="stat-icon"><i class="fas fa-user-plus"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ counts['new'] + counts['restore'] }}</span><span class="stat-label">Will Be Added</span></div></div>
+  <div class="stat-card stat-blue"><div class="stat-icon"><i class="fas fa-user-check"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ counts['exists'] + counts['dup'] }}</span><span class="stat-label">Already Listed</span></div></div>
+  <div class="stat-card stat-yellow"><div class="stat-icon"><i class="fas fa-forward"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ skipped_total }}</span><span class="stat-label">Lines Ignored</span></div></div>
+</div>
+
+{% if truncated %}<div class="alert alert-warning"><i class="fas fa-info-circle"></i> Only the first {{ rows|length }} names are shown. Upload the rest as a second file.</div>{% endif %}
+
+<form method="POST" action="{{ url_for(cfg.confirm) }}">
+  <input type="hidden" name="count" value="{{ rows|length }}"/>
+  <section class="section">
+    <div class="card" style="overflow-x:auto">
+      <table class="data-table">
+        <thead><tr>
+          <th style="width:36px"><input type="checkbox" id="selAll" checked title="Select all"/></th>
+          <th>#</th><th>Full name</th><th style="width:170px">Class</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+          {% for r in rows %}
+          {% set usable = r['status'] in ('new', 'restore') %}
+          <tr class="{{ '' if usable else 'ri-dim' }}">
+            <td><input type="checkbox" name="keep" value="{{ r['idx'] }}" class="rowChk" {{ 'checked' if usable and r['cls'] else '' }}/></td>
+            <td class="ri-muted">{{ loop.index }}</td>
+            <td><input type="text" name="name_{{ r['idx'] }}" value="{{ r['name'] }}" class="form-control ri-cell"/></td>
+            <td><input type="text" name="cls_{{ r['idx'] }}" value="{{ r['cls'] }}" class="form-control ri-cell {{ '' if r['cls'] else 'ri-need' }}" placeholder="Class needed"/></td>
+            <td>
+              {% if r['status'] == 'new' %}<span class="badge badge-green">New</span>
+              {% elif r['status'] == 'restore' %}<span class="badge badge-yellow">Was removed — will be restored</span>
+              {% elif r['status'] == 'exists' %}<span class="badge badge-blue">Already registered</span>
+              {% else %}<span class="badge badge-blue">Repeated in file</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% if skipped %}
+  <details class="ri-skipped">
+    <summary>{{ skipped_total }} line{{ '' if skipped_total == 1 else 's' }} ignored (headings, totals, page numbers…)</summary>
+    <ul>{% for l in skipped %}<li>{{ l }}</li>{% endfor %}</ul>
+    {% if skipped_total > skipped|length %}<p class="ri-muted">…and {{ skipped_total - skipped|length }} more.</p>{% endif %}
+    <p class="ri-muted">If a real student is in this list, add them by hand afterwards.</p>
+  </details>
+  {% endif %}
+
+  <div class="ri-actions">
+    <span class="ri-muted" id="selCount"></span>
+    <button class="btn btn-primary btn-lg"><i class="fas fa-check"></i> Save selected students</button>
+  </div>
+</form>
+
+<style>
+  .rg-sub { margin: .35rem 0 0; font-size: .88rem; color: var(--ink-light); max-width: 720px; }
+  .ri-muted { color: var(--ink-light); font-size: .82rem; }
+  .ri-cell { padding: .4rem .6rem; font-size: .88rem; }
+  .ri-need { border-color: var(--danger); background: #fff5f6; }
+  tr.ri-dim td { opacity: .6; }
+  .ri-skipped { margin: 1rem 0; font-size: .85rem; color: var(--ink-mid); }
+  .ri-skipped summary { cursor: pointer; font-weight: 600; }
+  .ri-skipped ul { margin: .6rem 0; padding-left: 1.2rem; max-height: 180px; overflow: auto; }
+  .ri-actions { display: flex; align-items: center; justify-content: space-between; margin: 1.2rem 0 2rem; }
+</style>
+<script>
+(function () {
+  var all = document.getElementById('selAll'), boxes = document.querySelectorAll('.rowChk'),
+      count = document.getElementById('selCount');
+  function refresh() {
+    var n = 0; boxes.forEach(function (b) { if (b.checked) n++; });
+    count.textContent = n + ' of ' + boxes.length + ' selected';
+  }
+  all.addEventListener('change', function () { boxes.forEach(function (b) { b.checked = all.checked; }); refresh(); });
+  boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+  refresh();
+})();
+</script>
+{% endblock %}
