@@ -1,82 +1,65 @@
-# EIA Staff Attendance & Gadget Tracking System
+# EIA Gadget Tracking System
 
-## 📁 Project Structure
+Tablet lending and timetable-controlled access to students' personal laptops for
+Empower International Academy.
 
-```
-eia_system/
-├── app.py                  # Main Flask application (routes, models, logic)
-├── requirements.txt        # Python dependencies
-├── README.md               # This file
-├── static/
-│   ├── css/
-│   │   └── style.css       # All styles (navy/white/green theme)
-│   └── js/
-│       └── main.js         # Overdue notifications + UI enhancements
-└── templates/
-    ├── base.html           # Base layout (navbar, footer, flash messages)
-    ├── index.html          # Public home page
-    ├── login.html          # Admin login
-    ├── dashboard.html      # Admin dashboard
-    ├── gate.html           # Gate attendance (public)
-    ├── staff_list.html     # Staff management list
-    ├── add_staff.html      # Add staff form
-    ├── edit_staff.html     # Edit staff form
-    ├── attendance_history.html  # Historical attendance viewer
-    ├── tablet_list.html    # Tablet inventory
-    ├── add_tablet.html     # Register new tablet
-    ├── tablet_signout.html # Public sign-out form (students)
-    └── tablet_transactions.html # Active & history transactions
-```
+## What it does
 
-## 🚀 How to Run
+- **Tablets** — admins sign tablets out to students and back in; overdue tablets are flagged live.
+- **Personal laptops** — students who own a laptop each get a **timetable** (set by an admin, with
+  the student's recorded consent). A laptop can only be signed out **during the student's own
+  slot** — not before, not after, and not on other days. There is no admin override. Laptops kept
+  past the end of the slot appear on the live **Overdue Laptops** page.
+- **Student registers** — one for every student in the school (used for name search on the tablet
+  sign-out page) and one for students with personal laptops. Admins add or remove students by hand
+  or upload a class-list PDF; the names are shown for checking before anything is saved.
+- **Activity log** — every action is recorded with the admin who did it.
 
-### 1. Install Python dependencies
+## Pages
+
+| URL | Access | Description |
+|-----|--------|-------------|
+| `/` | Public | Home page |
+| `/login` | Public | Admin login |
+| `/dashboard` | Admin | Tablets + laptops overview, charts, live overdue lists |
+| `/tablets` · `/tablets/add` | Admin | Tablet inventory and registration |
+| `/tablets/signout` | Admin | Sign a tablet out (type a few letters of the student's name) |
+| `/tablets/transactions` · `/tablets/overdue` | Admin | Tablet history and overdue tablets |
+| `/students` | Admin | School student register (add / remove / PDF upload) |
+| `/laptops` | Admin | **Laptop Desk** — sign laptops out and in |
+| `/laptops/overdue` | Admin | Overdue laptops (live) |
+| `/laptops/students` | Admin | Laptop students register (add / remove / PDF upload) |
+| `/laptops/students/<id>/timetable` | Admin | Edit a student's timetable and record their consent |
+| `/activity` | Admin | Team activity log |
+| `/api/tablet-status` | Admin API | Live numbers polled by the pages every 10 seconds |
+
+## Laptop timetable rules
+
+1. A student needs at least one slot (day + start time + end time, school time).
+2. The student must have agreed to the timetable. Any change to a slot clears the consent, so it
+   has to be recorded again before laptops can be signed out.
+3. A laptop can be signed out only while a slot is open (start time inclusive, end time exclusive).
+4. The laptop is due back at the end of that slot. After that it shows as overdue.
+5. Signing a laptop **in** is allowed at any time; a late return is recorded as late.
+
+## Configuration (environment variables)
+
+`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SECRET_KEY` — required.
+`APP_TIMEZONE` — optional (default `Africa/Kampala`).
+`ADMIN_USERNAME` / `ADMIN_PASSWORD` — optional emergency login.
+
+Admin accounts are stored (hashed) in the Turso `admins` table.
+
+## Run locally
+
 ```bash
-cd eia_system
 pip install -r requirements.txt
-```
-
-### 2. Run the application
-```bash
 python app.py
 ```
 
-### 3. Open in browser
-```
-http://127.0.0.1:5000
-```
+## Notes
 
-## 🔐 Admin Login
-Admin accounts are defined in the `ADMIN_ACCOUNTS` dictionary in `app.py`
-(`admin`, `U.Isaac`, `Enid` and `academicminister`). All accounts have full admin access.
-To add or change an account, edit that dictionary.
-
-> ⚠️ Change the default passwords in `app.py` before deploying to production.
-
-## 📌 Key URLs
-
-| URL                          | Access  | Description                        |
-|------------------------------|---------|-------------------------------------|
-| `/`                          | Public  | Home page                          |
-| `/gate`                      | Public  | Gate attendance (mark staff)       |
-| `/tablets/signout`           | Public  | Student tablet sign-out            |
-| `/login`                     | Public  | Admin login                        |
-| `/dashboard`                 | Admin   | Overview dashboard                 |
-| `/staff`                     | Admin   | Manage staff list                  |
-| `/staff/add`                 | Admin   | Add new staff member               |
-| `/attendance/history`        | Admin   | View attendance by date            |
-| `/tablets`                   | Admin   | Tablet inventory                   |
-| `/tablets/transactions`      | Admin   | Active borrows + return history    |
-| `/api/overdue`               | API     | JSON list of overdue tablets       |
-
-## ✅ Sample Test Data
-The app auto-seeds 5 staff members and 5 tablets on first run:
-
-**Staff:** Alice Mensah, Benjamin Ofori, Clara Asante, David Boateng, Esther Nkrumah
-
-**Tablets:** TAB-01 through TAB-05
-
-## 🔔 Notification System
-- The admin dashboard polls `/api/overdue` every 60 seconds
-- An overdue banner appears at the top of every admin page
-- Browser push notifications are requested on first load
+- Staff attendance has been removed. The old `staff` and `attendance` tables are no longer created
+  or used; if they still exist in your Turso database their data is left untouched.
+- PDF import reads text-based PDFs (saved from Word or Excel). A scanned picture of a list has no
+  text to read — paste the names instead.
