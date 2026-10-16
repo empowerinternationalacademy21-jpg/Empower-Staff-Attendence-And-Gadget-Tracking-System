@@ -1,5 +1,5 @@
 """
-EIA Staff Attendance and Gadget Tracking System
+EIA Gadget Tracking System
 
 Backend: Flask + Turso (libSQL, hosted SQLite) via db.py
 Required environment variables:
@@ -9,8 +9,8 @@ Optional emergency login: set ADMIN_USERNAME (default "admin") and
 ADMIN_PASSWORD in the environment; it works even if the table is empty.
 """
 from flask import (Flask, render_template, request, redirect, url_for, flash,
-                   session, jsonify, make_response, send_file)
-from datetime import datetime, date, timedelta, timezone
+                   session, jsonify, make_response)
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import time as _time
 from functools import wraps
@@ -23,19 +23,9 @@ from werkzeug.security import check_password_hash
 
 from db import get_db, init_db
 
-# ReportLab imports for PDF generation
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.units import mm
-from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle, Paragraph,
-                                Spacer, KeepTogether)
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-from reportlab.platypus import Image as RLImage
-from reportlab.graphics.shapes import Drawing, Rect, String, Line, Circle
-
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or os.urandom(24).hex()
+app.config['MAX_CONTENT_LENGTH'] = 15 * 1024 * 1024      # student-list uploads (15 MB)
 
 # Create tables/columns if they don't exist (safe on existing data).
 # If the database is briefly unreachable at startup, this is retried on the
@@ -100,17 +90,31 @@ def to_utc_iso(dt):
 
 # action code -> (label, icon, colour class)
 ACTION_META = {
-    'login':           ('Logged in',            'fa-sign-in-alt',  'a-grey'),
-    'logout':          ('Logged out',           'fa-sign-out-alt', 'a-grey'),
-    'staff_add':       ('Added staff',          'fa-user-plus',    'a-green'),
-    'staff_edit':      ('Edited staff',         'fa-user-edit',    'a-blue'),
-    'staff_delete':    ('Removed staff',        'fa-user-minus',   'a-red'),
-    'tablet_register': ('Registered tablets',   'fa-plus-circle',  'a-green'),
-    'tablet_remove':   ('Removed tablet',       'fa-trash-alt',    'a-red'),
-    'tablet_signout':  ('Signed out tablet',    'fa-hand-holding', 'a-amber'),
-    'tablet_return':   ('Signed in tablet',     'fa-undo',         'a-teal'),
-    'report_pdf':      ('Downloaded report',    'fa-file-pdf',     'a-blue'),
+    'login':           ('Logged in',             'fa-sign-in-alt',  'a-grey'),
+    'logout':          ('Logged out',            'fa-sign-out-alt', 'a-grey'),
+    'tablet_register': ('Registered tablets',    'fa-plus-circle',  'a-green'),
+    'tablet_remove':   ('Removed tablet',        'fa-trash-alt',    'a-red'),
+    'tablet_signout':  ('Signed out tablet',     'fa-hand-holding', 'a-amber'),
+    'tablet_return':   ('Signed in tablet',      'fa-undo',         'a-teal'),
+    'student_add':     ('Added student',         'fa-user-plus',    'a-green'),
+    'student_remove':  ('Removed students',      'fa-user-minus',   'a-red'),
+    'student_import':  ('Imported students',     'fa-file-import',  'a-blue'),
+    'laptop_student_add':    ('Added laptop student',    'fa-laptop',       'a-green'),
+    'laptop_student_edit':   ('Edited laptop student',   'fa-user-edit',    'a-blue'),
+    'laptop_student_remove': ('Removed laptop students', 'fa-user-minus',   'a-red'),
+    'laptop_import':   ('Imported laptop students', 'fa-file-import', 'a-blue'),
+    'timetable_edit':  ('Edited timetable',      'fa-calendar-alt', 'a-blue'),
+    'timetable_consent': ('Recorded consent',    'fa-signature',    'a-teal'),
+    'laptop_signout':  ('Signed out laptop',     'fa-laptop',       'a-amber'),
+    'laptop_return':   ('Signed in laptop',      'fa-undo',         'a-teal'),
+    'laptop_blocked':  ('Laptop sign-out blocked', 'fa-ban',        'a-red'),
+    # kept only so older log entries still display properly
+    'staff_add':       ('Added staff',           'fa-user-plus',    'a-green'),
+    'staff_edit':      ('Edited staff',          'fa-user-edit',    'a-blue'),
+    'staff_delete':    ('Removed staff',         'fa-user-minus',   'a-red'),
+    'report_pdf':      ('Downloaded report',     'fa-file-pdf',     'a-blue'),
 }
+HISTORIC_ACTIONS = {'staff_add', 'staff_edit', 'staff_delete', 'report_pdf'}
 
 
 def log_activity(action, details='', admin=None):
@@ -129,7 +133,9 @@ def log_activity(action, details='', admin=None):
 
 @app.context_processor
 def _inject_activity_meta():
-    return {'action_meta': ACTION_META}
+    return {'action_meta': ACTION_META,
+            'action_filter_meta': {k: v for k, v in ACTION_META.items()
+                                   if k not in HISTORIC_ACTIONS}}
 
 
 # ─────────────────────────────────────────────
@@ -236,20 +242,8 @@ def logout():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    today = local_today().isoformat()
     now = datetime.utcnow().isoformat()
     with get_db() as conn:
-        total_staff = conn.execute(
-            "SELECT COUNT(*) FROM staff WHERE is_active=1").fetchone()[0]
-
-        # Count only attendance records that belong to active staff members
-        present_today = conn.execute(
-            "SELECT COUNT(*) FROM attendance a JOIN staff s ON a.staff_id = s.id"
-            " WHERE a.date=? AND a.status='Present' AND s.is_active=1",
-            (today,)
-        ).fetchone()[0]
-        absent_today = total_staff - present_today
-
         total_tablets = conn.execute(
             "SELECT COUNT(*) FROM tablets WHERE is_active=1").fetchone()[0]
         borrowed_count = conn.execute(
@@ -271,6 +265,14 @@ def dashboard():
             ORDER BY tt.sign_back_time DESC LIMIT 5
         """).fetchall()
 
+        # ---- Personal laptops ----
+        lap = conn.execute(
+            "SELECT (SELECT COUNT(*) FROM laptop_students WHERE is_active=1) AS students, "
+            "(SELECT COUNT(DISTINCT se.student_id) FROM laptop_sessions se "
+            " JOIN laptop_students ls ON ls.id = se.student_id "
+            " WHERE se.status='Out' AND ls.is_active=1) AS out_now").fetchone()
+        lap_overdue_rows = _laptop_overdue_rows(conn)
+
         # ---- Data for the dashboard charts ----
         since = (local_today() - timedelta(days=13)).isoformat()
         out_rows = conn.execute(
@@ -285,11 +287,25 @@ def dashboard():
             "SELECT student_class AS cls, COUNT(*) AS c FROM tablet_transactions "
             "WHERE student_class IS NOT NULL AND student_class <> '' "
             "GROUP BY student_class ORDER BY c DESC LIMIT 8").fetchall()
+        lap_session_rows = conn.execute(
+            "SELECT sign_out_time, expected_return_time, sign_back_time, status "
+            "FROM laptop_sessions WHERE substr(sign_out_time,1,10) >= ?",
+            ((local_today() - timedelta(days=14)).isoformat(),)).fetchall()
 
     out_map = {r['d']: r['c'] for r in out_rows}
     back_map = {r['d']: r['c'] for r in back_rows}
     days = [(local_today() - timedelta(days=i)) for i in range(13, -1, -1)]
     overdue_n = len(overdue)
+
+    # laptop sessions per (school) day: returned on time vs late / still overdue
+    on_time, late = {}, {}
+    for r in lap_session_rows:
+        day = to_local(r['sign_out_time']).date().isoformat()
+        was_late = ((r['sign_back_time'] and r['sign_back_time'] > r['expected_return_time'])
+                    or (not r['sign_back_time'] and r['expected_return_time'] < now))
+        (late if was_late else on_time)[day] = (late if was_late else on_time).get(day, 0) + 1
+
+    lap_students, lap_out, lap_overdue_n = lap['students'], lap['out_now'], len(lap_overdue_rows)
     chart_data = {
         'tablet_status': {
             'labels': ['Available', 'Borrowed', 'Overdue'],
@@ -307,10 +323,16 @@ def dashboard():
             'labels': [r['cls'] for r in class_rows],
             'values': [r['c'] for r in class_rows],
         },
-        'staff': {
-            'labels': ['Present', 'Absent'],
-            'values': [present_today, max(absent_today, 0)],
-            'total': total_staff,
+        'laptop_status': {
+            'labels': ['In storage', 'Out (in session)', 'Overdue'],
+            'values': [max(lap_students - lap_out, 0), max(lap_out - lap_overdue_n, 0),
+                       lap_overdue_n],
+            'total': lap_students,
+        },
+        'laptop_daily': {
+            'labels': [d.strftime('%d %b') for d in days],
+            'on_time': [on_time.get(d.isoformat(), 0) for d in days],
+            'late': [late.get(d.isoformat(), 0) for d in days],
         },
     }
 
@@ -325,159 +347,17 @@ def dashboard():
     return render_template('dashboard.html',
                            chart_data=chart_data,
                            team_activity=team_activity,
-                           total_staff=total_staff,
-                           present_today=present_today,
-                           absent_today=absent_today,
                            total_tablets=total_tablets,
                            borrowed_tablets=borrowed_count,
                            in_storage=max(total_tablets - borrowed_count, 0),
                            overdue_tablets=overdue,
                            recently_returned=recently_returned,
+                           lap_students=lap_students,
+                           lap_out=lap_out,
+                           lap_in=max(lap_students - lap_out, 0),
+                           lap_overdue_n=lap_overdue_n,
+                           overdue_laptops=_laptop_overdue_payload(lap_overdue_rows),
                            today=local_today())
-
-
-# ─────────────────────────────────────────────
-# GATE ATTENDANCE
-# ─────────────────────────────────────────────
-
-@app.route('/gate')
-def gate():
-    today = local_today().isoformat()
-    with get_db() as conn:
-        staff_list = conn.execute(
-            "SELECT * FROM staff WHERE is_active=1 ORDER BY name").fetchall()
-        att_rows = conn.execute(
-            "SELECT * FROM attendance WHERE date=?", (today,)).fetchall()
-    today_attendance = {row['staff_id']: row for row in att_rows}
-    return render_template('gate.html',
-                           staff_list=staff_list,
-                           today_attendance=today_attendance,
-                           today=local_today())
-
-
-@app.route('/gate/mark', methods=['POST'])
-def mark_attendance():
-    staff_id = request.form.get('staff_id')
-    today = local_today().isoformat()
-    now_time = datetime.utcnow().strftime('%H:%M:%S')
-    with get_db() as conn:
-        existing = conn.execute(
-            "SELECT * FROM attendance WHERE staff_id=? AND date=?",
-            (staff_id, today)
-        ).fetchone()
-        if existing:
-            if existing['status'] == 'Present':
-                conn.execute(
-                    "UPDATE attendance SET status='Absent', time_in=NULL WHERE id=?",
-                    (existing['id'],))
-            else:
-                conn.execute(
-                    "UPDATE attendance SET status='Present', time_in=? WHERE id=?",
-                    (now_time, existing['id']))
-        else:
-            conn.execute(
-                "INSERT INTO attendance (staff_id, date, status, time_in) VALUES (?,?,?,?)",
-                (staff_id, today, 'Present', now_time))
-    return redirect(url_for('gate'))
-
-
-# ─────────────────────────────────────────────
-# STAFF MANAGEMENT
-# ─────────────────────────────────────────────
-
-@app.route('/staff')
-@login_required
-def staff_list():
-    with get_db() as conn:
-        staff = conn.execute(
-            "SELECT * FROM staff WHERE is_active=1 ORDER BY name").fetchall()
-    return render_template('staff_list.html', staff=staff)
-
-
-@app.route('/staff/add', methods=['GET', 'POST'])
-@login_required
-def add_staff():
-    if request.method == 'POST':
-        name = request.form.get('name')
-        email = request.form.get('email')
-        phone = request.form.get('phone')
-        dept = request.form.get('department')
-        with get_db() as conn:
-            if conn.execute("SELECT id FROM staff WHERE email=?", (email,)).fetchone():
-                flash('A staff member with that email already exists.', 'danger')
-                return redirect(url_for('add_staff'))
-            conn.execute(
-                "INSERT INTO staff (name, email, phone, department) VALUES (?,?,?,?)",
-                (name, email, phone, dept))
-        log_activity('staff_add', f'Added staff member {name}' + (f' ({dept})' if dept else ''))
-        flash(f'{name} added successfully!', 'success')
-        return redirect(url_for('staff_list'))
-    return render_template('add_staff.html')
-
-
-@app.route('/staff/edit/<int:staff_id>', methods=['GET', 'POST'])
-@login_required
-def edit_staff(staff_id):
-    with get_db() as conn:
-        staff = conn.execute("SELECT * FROM staff WHERE id=?", (staff_id,)).fetchone()
-        if not staff:
-            flash('Staff not found.', 'danger')
-            return redirect(url_for('staff_list'))
-        if request.method == 'POST':
-            conn.execute(
-                "UPDATE staff SET name=?, email=?, phone=?, department=? WHERE id=?",
-                (request.form.get('name'), request.form.get('email'),
-                 request.form.get('phone'), request.form.get('department'), staff_id))
-            log_activity('staff_edit', f"Updated details of {request.form.get('name') or staff['name']}")
-            flash('Staff details updated.', 'success')
-            return redirect(url_for('staff_list'))
-    return render_template('edit_staff.html', staff=staff)
-
-
-@app.route('/staff/delete/<int:staff_id>', methods=['POST'])
-@login_required
-def delete_staff(staff_id):
-    with get_db() as conn:
-        s = conn.execute("SELECT name FROM staff WHERE id=?", (staff_id,)).fetchone()
-        if not s:
-            flash('Staff not found.', 'danger')
-            return redirect(url_for('staff_list'))
-        # Soft-delete the staff member
-        conn.execute("UPDATE staff SET is_active=0 WHERE id=?", (staff_id,))
-        # Remove attendance records so they no longer affect present/absent counts
-        conn.execute("DELETE FROM attendance WHERE staff_id=?", (staff_id,))
-    log_activity('staff_delete', f'Removed staff member {s["name"]}')
-    flash(f'{s["name"]} removed.', 'info')
-    return redirect(url_for('staff_list'))
-
-
-# ─────────────────────────────────────────────
-# ATTENDANCE HISTORY
-# ─────────────────────────────────────────────
-
-def _parse_date_arg():
-    value = request.args.get('date', local_today().isoformat())
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return local_today()
-
-
-@app.route('/attendance/history')
-@login_required
-def attendance_history():
-    selected_date = _parse_date_arg()
-    with get_db() as conn:
-        all_staff = conn.execute(
-            "SELECT * FROM staff WHERE is_active=1 ORDER BY name").fetchall()
-        att_rows = conn.execute(
-            "SELECT * FROM attendance WHERE date=?",
-            (selected_date.isoformat(),)).fetchall()
-    records = {row['staff_id']: row for row in att_rows}
-    return render_template('attendance_history.html',
-                           all_staff=all_staff,
-                           records=records,
-                           selected_date=selected_date)
 
 
 # ─────────────────────────────────────────────
@@ -712,9 +592,13 @@ def tablet_signout():
         all_tablets = conn.execute("SELECT * FROM tablets WHERE is_active=1").fetchall()
         available = [t for t in all_tablets
                      if tablet_status(conn, t['id']) == 'Available']
+        register = conn.execute(
+            "SELECT full_name, class_name FROM students WHERE is_active=1 "
+            "ORDER BY full_name COLLATE NOCASE").fetchall()
+    students = [{'n': r['full_name'], 'c': r['class_name'] or ''} for r in register]
     return render_template('tablet_signout.html', tablets=available, admin=admin,
                            form=form, server_now_ms=int(_time.time() * 1000),
-                           tz_name=APP_TZ_NAME)
+                           tz_name=APP_TZ_NAME, students=students)
 
 
 @app.route('/tablets/transactions')
@@ -809,337 +693,1082 @@ def delete_tablet(tablet_id):
 
 
 # ─────────────────────────────────────────────
-# PDF ATTENDANCE REPORT
+# LAPTOP TIMETABLE RULES
+# (pure functions: no database, no Flask — the single source of truth for
+#  "may this student take the laptop out right now?")
 # ─────────────────────────────────────────────
 
-@app.route('/attendance/pdf')
-@login_required
-def attendance_pdf():
-    selected_date = _parse_date_arg()
-    log_activity('report_pdf', f'Downloaded the attendance report for {selected_date.strftime("%d %b %Y")}')
+WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+WD_SHORT = [d[:3] for d in WEEKDAYS]
+MIN_SLOT_MINUTES = 5
 
-    with get_db() as conn:
-        all_staff = conn.execute(
-            "SELECT * FROM staff WHERE is_active=1 ORDER BY name").fetchall()
-        att_rows = conn.execute(
-            "SELECT * FROM attendance WHERE date=?",
-            (selected_date.isoformat(),)).fetchall()
-    records = {row['staff_id']: row for row in att_rows}
 
-    logo_path = os.path.join(os.path.dirname(__file__), 'static', 'logo.png')
+def hhmm_to_min(value):
+    """'09:30' -> 570. Raises ValueError for anything that is not a real time."""
+    m = re.fullmatch(r'\s*(\d{1,2}):(\d{2})(?::\d{2})?\s*', value or '')
+    if not m:
+        raise ValueError(value)
+    h, mi = int(m.group(1)), int(m.group(2))
+    if h > 23 or mi > 59:
+        raise ValueError(value)
+    return h * 60 + mi
 
-    # ── Brand colours ──
-    NAVY = colors.HexColor('#1a2a6c')
-    LIME_DARK = colors.HexColor('#5a9a10')
-    GREEN = colors.HexColor('#16a34a')
-    GREEN_BG = colors.HexColor('#dcfce7')
-    RED = colors.HexColor('#dc2626')
-    RED_BG = colors.HexColor('#fee2e2')
-    GOLD = colors.HexColor('#d4a843')
-    GREY_50 = colors.HexColor('#f9fafb')
-    GREY_100 = colors.HexColor('#f3f4f6')
-    GREY_200 = colors.HexColor('#e5e7eb')
-    GREY_400 = colors.HexColor('#9ca3af')
-    GREY_600 = colors.HexColor('#4b5563')
-    WHITE = colors.white
-    BLACK = colors.HexColor('#111827')
 
-    PAGE_W, PAGE_H = A4
-    MARGIN = 14 * mm
-    CONTENT_W = PAGE_W - MARGIN * 2
+def min_to_hhmm(n):
+    return f'{n // 60:02d}:{n % 60:02d}'
 
-    # ── Derived data ──
-    present_list, absent_list = [], []
-    for s in all_staff:
-        att = records.get(s['id'])
-        if att and att['status'] == 'Present':
-            present_list.append((s, att))
+
+def fmt12(value):
+    """'14:05' -> '2:05 PM'."""
+    h, m = divmod(hhmm_to_min(value), 60)
+    return f"{(h % 12) or 12}:{m:02d} {'AM' if h < 12 else 'PM'}"
+
+
+def slot_label(slot):
+    return f"{fmt12(slot['start_time'])} – {fmt12(slot['end_time'])}"
+
+
+def _by_start(slots):
+    return sorted(slots, key=lambda s: (int(s['weekday']), hhmm_to_min(s['start_time'])))
+
+
+def find_active_slot(slots, now_local):
+    """The slot that is open right now (start <= now < end), or None."""
+    wd = now_local.weekday()
+    nm = now_local.hour * 60 + now_local.minute
+    for s in _by_start(slots):
+        if (int(s['weekday']) == wd
+                and hhmm_to_min(s['start_time']) <= nm < hhmm_to_min(s['end_time'])):
+            return s
+    return None
+
+
+def find_next_slot(slots, now_local):
+    """Next slot that starts after 'now' -> (days_ahead, slot) or (None, None)."""
+    wd = now_local.weekday()
+    nm = now_local.hour * 60 + now_local.minute
+    ordered = _by_start(slots)
+    for ahead in range(0, 8):
+        day = (wd + ahead) % 7
+        for s in ordered:
+            if int(s['weekday']) != day:
+                continue
+            if ahead == 0 and hhmm_to_min(s['start_time']) <= nm:
+                continue
+            return ahead, s
+    return None, None
+
+
+def describe_next(ahead, slot):
+    if slot is None:
+        return None
+    day = WEEKDAYS[int(slot['weekday'])]
+    when = ('today' if ahead == 0 else 'tomorrow' if ahead == 1
+            else f'next {day}' if ahead == 7 else day)
+    return f"{when}, {slot_label(slot)}"
+
+
+def check_laptop_access(name, slots, consent_ok, is_out, now_local):
+    """Decide whether this student may take their laptop out RIGHT NOW.
+
+    There is deliberately NO admin override: outside the student's timetable
+    the answer is always no. Returns a dict:
+        ok (bool), code (str), message (str), slot (the open slot or None)
+    """
+    def deny(code, msg):
+        return {'ok': False, 'code': code, 'message': msg, 'slot': None}
+
+    if is_out:
+        return deny('already_out', f'{name} already has a laptop signed out.')
+    if not slots:
+        return deny('no_timetable', f'{name} has no timetable yet. Create one first.')
+    if not consent_ok:
+        return deny('no_consent',
+                    f"{name}'s timetable has not been agreed yet. Record the "
+                    f"student's consent on the timetable page first.")
+
+    active = find_active_slot(slots, now_local)
+    if active:
+        return {'ok': True, 'code': 'ok', 'slot': active,
+                'message': f"Allowed — slot {slot_label(active)} today. "
+                           f"Laptop must be back by {fmt12(active['end_time'])}."}
+
+    wd = now_local.weekday()
+    nm = now_local.hour * 60 + now_local.minute
+    today = [s for s in _by_start(slots) if int(s['weekday']) == wd]
+    ahead, nxt = find_next_slot(slots, now_local)
+    tail = (f" Next slot: {describe_next(ahead, nxt)}." if nxt else '')
+    later = [s for s in today if hhmm_to_min(s['start_time']) > nm]
+    if not today:
+        return deny('wrong_day', f"{name} has no laptop slot on {WEEKDAYS[wd]}." + tail)
+    if later:
+        return deny('not_yet',
+                    f"Too early. {name}'s slot today starts at "
+                    f"{fmt12(later[0]['start_time'])}." )
+    return deny('slot_over', f"{name}'s slot today has ended." + tail)
+
+
+def validate_slot(weekday, start, end, others):
+    """Check one slot against the rules. `others` = the student's other slots.
+    Returns (error_message or None, start_minutes, end_minutes)."""
+    try:
+        wd = int(weekday)
+        if not 0 <= wd <= 6:
+            raise ValueError
+    except (TypeError, ValueError):
+        return 'Choose a valid day.', 0, 0
+    try:
+        a, b = hhmm_to_min(start), hhmm_to_min(end)
+    except ValueError:
+        return 'Enter a valid start and end time.', 0, 0
+    if b - a < MIN_SLOT_MINUTES:
+        return (f'The end time must be at least {MIN_SLOT_MINUTES} minutes after '
+                f'the start time on {WEEKDAYS[wd]}.'), a, b
+    for o in others:
+        if int(o['weekday']) != wd:
+            continue
+        oa, ob = hhmm_to_min(o['start_time']), hhmm_to_min(o['end_time'])
+        if a < ob and oa < b:
+            return (f"{WEEKDAYS[wd]} {fmt12(start)} – {fmt12(end)} overlaps another slot "
+                    f"({slot_label(o)})."), a, b
+    return None, a, b
+
+
+# ─────────────────────────────────────────────
+# STUDENT LIST READER (PDF / text -> names + classes)
+# Pure functions: used by both student registers' "Import" pages.
+# ─────────────────────────────────────────────
+
+_NUM_WORDS = r'(?:ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|NINE|TEN)'
+CLASS_RE = re.compile(
+    r"""^(?:
+        (?:P|S|Y|G|F|PRI|SEC|SNR|YR|STD)\.?\s?-?\s?\d{1,2}\s?[A-Z]?
+      | (?:PRIMARY|SENIOR|YEAR|GRADE|FORM|STANDARD|CLASS)\.?\s?-?\s?(?:\d{1,2}|""" + _NUM_WORDS + r""")\s?[A-Z]?
+      | (?:BABY|MIDDLE|TOP|NURSERY|RECEPTION|KG\s?\d?|PRE-?\s?UNIT)(?:\s+CLASS)?
+    )$""", re.I | re.X)
+
+_GENDER = {'M', 'F', 'MALE', 'FEMALE', 'BOY', 'GIRL'}     # (B / G are stream letters, not gender)
+_HEADER_WORDS = {'NO', 'NO.', 'S/N', 'SN', 'NAME', 'NAMES', 'FULL', 'STUDENT', 'STUDENTS',
+                 'PUPIL', 'PUPILS', 'CLASS', 'STREAM', 'GENDER', 'SEX', 'AGE', 'ADM',
+                 'ADMISSION', 'REG', 'NUMBER', 'SURNAME', 'OTHER', 'FIRST', 'LAST', 'DOB',
+                 'DATE', 'BIRTH', 'OF', 'ID', 'TERM', 'YEAR', 'S.N', '#'}
+_STOP_WORDS = {'ACADEMY', 'SCHOOL', 'INTERNATIONAL', 'TERM', 'LIST', 'REGISTER', 'REPORT',
+               'TOTAL', 'TOTALS', 'PAGE', 'TEACHER', 'SIGNATURE', 'DATE', 'ROLL', 'ATTENDANCE',
+               'STUDENTS', 'PUPILS', 'CLASS', 'NOMINAL', 'SHEET', 'GIRLS', 'BOYS', 'NAME',
+               'NAMES', 'PRIMARY', 'SECONDARY', 'NURSERY', 'KINDERGARTEN', 'EMPOWER', 'HEADTEACHER',
+               'DIRECTOR', 'PREPARED', 'APPROVED', 'COPY', 'PRINTED', 'YEAR', 'STREAM',
+               'MR', 'MRS', 'MS', 'MISS', 'MADAM', 'SIR', 'PRINCIPAL', 'HEAD', 'DEPUTY',
+               'BURSAR', 'PATRON', 'MATRON', 'MASTER', 'MISTRESS'}
+_HEADING_RE = re.compile(r'\b(class|list|register|roll|pupils|students|term|stream|nominal)\b', re.I)
+
+
+def _title_word(w):
+    parts = re.split(r"([-'’])", w)
+    return ''.join(p[:1].upper() + p[1:].lower() if p not in "-'’" else p for p in parts)
+
+
+def clean_person_name(raw):
+    """Tidy spacing; fix names typed in ALL CAPS or all lower case."""
+    name = re.sub(r'\s+', ' ', (raw or '')).strip(' ,;:-._')
+    if name and (name.isupper() or name.islower()):
+        name = ' '.join(_title_word(w) for w in name.split(' '))
+    return name[:80]
+
+
+def clean_class_name(raw):
+    cls = re.sub(r'\s+', ' ', (raw or '')).strip()
+    return cls[:30].upper() if re.fullmatch(r'(?i)[psygf]\.?\s?-?\d{1,2}\s?[a-z]?', cls) else cls[:30]
+
+
+def _find_class(tokens):
+    """Does the END of this token list look like a class? -> (class_text, n_tokens)."""
+    for k in (3, 2, 1):
+        if len(tokens) >= k:
+            cand = ' '.join(tokens[-k:])
+            if CLASS_RE.fullmatch(cand):
+                return cand, k
+    return None, 0
+
+
+def _is_noise(tok):
+    t = tok.strip('.,;:')
+    return (not t) or t.upper() in _GENDER or any(c.isdigit() for c in t)
+
+
+def _valid_name(name):
+    words = name.split()
+    if len(words) < 2 or sum(ch.isalpha() for ch in name) < 4:
+        return False
+    if any(not (ch.isalpha() or ch in " .'’-") for ch in name):
+        return False
+    return not any(w.strip('.').upper() in _STOP_WORDS for w in words)
+
+
+def _row_from_cells(cells):
+    cls, name_parts = '', []
+    for i, c in enumerate(cells):
+        if i == 0:
+            c = re.sub(r'^\s*\d+\s*[.):\-]?\s+', '', c)
+        c = c.strip()
+        if not c:
+            continue
+        if CLASS_RE.fullmatch(c):
+            cls = cls or c
+            continue
+        part, found = _row_from_tokens(c)       # a cell may hold "Name Class" or just a number/gender
+        if found and not cls:
+            cls = found
+        if part:
+            name_parts.append(part)
+    return ' '.join(name_parts), cls
+
+
+def _row_from_tokens(line):
+    line = re.sub(r'^\s*\d+\s*[.):\-]?\s+', '', line.strip())
+    tokens = line.split()
+    cls = ''
+    for _ in range(6):                      # peel gender / class / numbers off the right-hand end
+        if tokens and tokens[-1].strip('.,;:').upper() in _GENDER:
+            tokens = tokens[:-1]
+            continue
+        found, k = _find_class(tokens)
+        if found and not cls:
+            cls = found
+            tokens = tokens[:-k]
+        elif tokens and _is_noise(tokens[-1]):
+            tokens = tokens[:-1]
         else:
-            absent_list.append((s, att))
+            break
+    while tokens and _is_noise(tokens[0]):  # ... and the left-hand end
+        tokens = tokens[1:]
+    return ' '.join(tokens), cls
 
-    total = len(all_staff)
-    n_pres = len(present_list)
-    n_abs = len(absent_list)
-    pct = int(n_pres / total * 100) if total else 0
-    gen_str = local_now().strftime('%d %b %Y • %I:%M %p')
 
-    def time_fmt(t):
-        return fmt_time(t)
+def parse_student_text(text, default_class=''):
+    """Read lines of text into student rows.
 
-    def make_avatar(initial, bg, fg=WHITE, size=6.5 * mm):
-        d = Drawing(size, size)
-        r = size / 2
-        d.add(Circle(r, r, r, fillColor=bg, strokeColor=None))
-        d.add(String(r, r - 2.2, initial.upper(),
-                     fontName='Helvetica-Bold', fontSize=size * 0.42,
-                     fillColor=fg, textAnchor='middle'))
-        return d
+    Understands: numbered lists, tables (columns split by tabs, '|' or wide gaps),
+    a class column, class headings ("P.5 Class List"), gender/age/ID columns,
+    page headers and footers. Returns (rows, skipped_lines):
+        rows = [{'name': 'Mukasa Grace', 'cls': 'P.5'}, ...]
+    """
+    rows, skipped = [], []
+    current = clean_class_name(default_class)
+    for raw in (text or '').splitlines():
+        line = raw.strip()
+        if not line or re.fullmatch(r'[\W_]+', line):
+            continue
+        if re.match(r'(?i)^page\s*\d', line) or re.fullmatch(r'(?i)\d+\s*(?:/|of)\s*\d+', line):
+            continue
+        tokens = line.replace('|', ' ').split()
+        up = [t.strip('.:,#').upper() for t in tokens]
+        if up and all(t in _HEADER_WORDS or not t for t in up):          # "No. Name Class Sex"
+            continue
+        cells = [c for c in re.split(r'\t+|\s*\|\s*|\s{2,}', line) if c.strip()]
+        name, cls = _row_from_cells(cells) if len(cells) > 1 else _row_from_tokens(line)
+        name = clean_person_name(name)
+        if _valid_name(name):
+            rows.append({'name': name, 'cls': clean_class_name(cls) or current})
+            continue
 
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4,
-                            rightMargin=MARGIN, leftMargin=MARGIN,
-                            topMargin=10 * mm, bottomMargin=12 * mm)
-    story = []
+        # not a student row: maybe a heading such as "CLASS: P.5" or "Primary Five Class List"
+        found = None
+        if _HEADING_RE.search(line):
+            for i in range(len(tokens)):
+                for k in (3, 2, 1):
+                    cand = ' '.join(tokens[i:i + k]).strip(':,-')
+                    if len(tokens[i:i + k]) == k and CLASS_RE.fullmatch(cand):
+                        found = cand
+                        break
+                if found:
+                    break
+        if found:
+            current = clean_class_name(found)
+        else:
+            skipped.append(line)
+    return rows, skipped
 
-    # ── HEADER ──
-    if os.path.exists(logo_path):
-        logo_cell = RLImage(logo_path, width=16 * mm, height=16 * mm)
+
+def extract_pdf_text(data):
+    """All the text in a PDF (raises ValueError with a friendly message)."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        raise ValueError('PDF reading is not installed on the server (add "pypdf" to requirements.txt).')
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        if reader.is_encrypted:
+            try:
+                opened = reader.decrypt('')           # many PDFs are "encrypted" with an empty password
+            except Exception:
+                opened = 0
+            if not opened:
+                raise ValueError('This PDF is password-protected. Remove the password and try again.')
+        pages = []
+        for page in reader.pages:
+            try:
+                txt = page.extract_text(extraction_mode='layout')
+            except Exception:
+                txt = page.extract_text()
+            pages.append(txt or '')
+    except ValueError:
+        raise
+    except Exception:
+        raise ValueError('That file could not be read as a PDF.')
+    text = '\n'.join(pages)
+    if not text.strip():
+        raise ValueError('No text found in this PDF — it looks like a scanned picture. '
+                         'Use a PDF saved from Word/Excel, or paste the names instead.')
+    return text
+
+
+# ─────────────────────────────────────────────
+# STUDENT REGISTERS
+#   /students          every student in the school (feeds the tablet sign-out search)
+#   /laptops/students  students who own a personal laptop (feeds the laptop desk)
+# Both registers share the same add / remove / PDF-import code below.
+# ─────────────────────────────────────────────
+
+REGISTER_PAGE_SIZE = 50
+IMPORT_BATCH = 150
+MAX_IMPORT_ROWS = 3000
+
+REGISTERS = {
+    'students': {
+        'table': 'students', 'title': 'School Students', 'noun': 'student',
+        'icon': 'fa-user-graduate', 'laptops': False,
+        'page': 'students_register', 'add': 'students_add', 'remove': 'students_remove',
+        'import': 'students_import', 'confirm': 'students_import_confirm',
+        'log_add': 'student_add', 'log_remove': 'student_remove', 'log_import': 'student_import',
+        'blurb': 'Every student in the school. On the tablet sign-out page an admin types a few '
+                 'letters of a name and the full name and class fill in automatically.',
+    },
+    'laptop': {
+        'table': 'laptop_students', 'title': 'Laptop Students', 'noun': 'student',
+        'icon': 'fa-laptop', 'laptops': True,
+        'page': 'laptop_students_register', 'add': 'laptop_students_add',
+        'remove': 'laptop_students_remove', 'import': 'laptop_students_import',
+        'confirm': 'laptop_students_import_confirm',
+        'log_add': 'laptop_student_add', 'log_remove': 'laptop_student_remove',
+        'log_import': 'laptop_import',
+        'blurb': 'Students who bring a personal laptop to school. Each one gets a timetable '
+                 '(agreed with the student) and can only collect the laptop during those times.',
+    },
+}
+
+
+def _natural_key(text):
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', text or '')]
+
+
+def _like_escape(text):
+    return text.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+
+
+def _register_find(conn, table, name, cls):
+    return conn.execute(
+        f"SELECT id, is_active FROM {table} "
+        f"WHERE full_name = ? COLLATE NOCASE AND class_name = ? COLLATE NOCASE",
+        (name, cls)).fetchone()
+
+
+def _register_existing(conn, table):
+    """{(name, class) lower-cased: (id, is_active)} for the whole register (one query)."""
+    rows = conn.execute(f"SELECT id, full_name, class_name, is_active FROM {table}").fetchall()
+    return {(r['full_name'].lower(), (r['class_name'] or '').lower()): (r['id'], r['is_active'])
+            for r in rows}
+
+
+def _register_add_one(conn, kind, name, cls, admin, model='', serial=''):
+    """-> 'added' | 'restored' | 'exists'"""
+    table = REGISTERS[kind]['table']
+    row = _register_find(conn, table, name, cls)
+    if row and row['is_active']:
+        return 'exists'
+    if row:
+        if kind == 'laptop':
+            conn.execute("UPDATE laptop_students SET is_active=1, laptop_model=?, serial_no=? "
+                         "WHERE id=?", (model, serial, row['id']))
+        else:
+            conn.execute("UPDATE students SET is_active=1 WHERE id=?", (row['id'],))
+        return 'restored'
+    if kind == 'laptop':
+        conn.execute("INSERT INTO laptop_students (full_name, class_name, laptop_model, serial_no, "
+                     "created_by) VALUES (?,?,?,?,?)", (name, cls, model, serial, admin))
     else:
-        logo_cell = Paragraph('EIA', ParagraphStyle(
-            'lc', fontSize=14, fontName='Helvetica-Bold',
-            textColor=WHITE, alignment=TA_CENTER))
-
-    school_p = Paragraph(
-        '<font size=15><b>Empower International Academy</b></font><br/>'
-        '<font size=9 color="#9ca3af">Staff Attendance Register</font>',
-        ParagraphStyle('sp', fontName='Helvetica', textColor=WHITE, leading=18))
-    date_p = Paragraph(
-        f'<font size=9 color="#9ca3af">Date</font><br/>'
-        f'<font size=13><b>{selected_date.strftime("%A")}</b></font><br/>'
-        f'<font size=10>{selected_date.strftime("%d %B %Y")}</font>',
-        ParagraphStyle('dp', fontName='Helvetica', textColor=WHITE,
-                       leading=15, alignment=TA_RIGHT))
-
-    hdr = Table([[logo_cell, school_p, date_p]], colWidths=[20 * mm, 110 * mm, 52 * mm])
-    hdr.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), NAVY),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
-        ('LEFTPADDING', (0, 0), (0, 0), 8),
-        ('LEFTPADDING', (1, 0), (1, 0), 10),
-        ('RIGHTPADDING', (2, 0), (2, 0), 10),
-        ('ROUNDEDCORNERS', [6]),
-    ]))
-    story.append(hdr)
-    story.append(Spacer(1, 5 * mm))
-
-    # ── STAT CARDS ──
-    def stat_p(val, label, val_hex):
-        return Paragraph(
-            f'<font size=22 color="{val_hex}"><b>{val}</b></font><br/>'
-            f'<font size=8 color="{GREY_600.hexval()}">{label}</font>',
-            ParagraphStyle('sc', fontName='Helvetica', alignment=TA_CENTER, leading=26))
-
-    stats = Table([[
-        stat_p(n_pres, 'PRESENT', GREEN.hexval()),
-        stat_p(n_abs, 'ABSENT', RED.hexval()),
-        stat_p(total, 'TOTAL STAFF', NAVY.hexval()),
-        stat_p(f'{pct}%', 'ATTENDANCE RATE', colors.HexColor('#a16207').hexval()),
-    ]], colWidths=[CONTENT_W / 4] * 4)
-    stats.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (0, 0), GREEN_BG),
-        ('BACKGROUND', (1, 0), (1, 0), RED_BG),
-        ('BACKGROUND', (2, 0), (2, 0), GREY_100),
-        ('BACKGROUND', (3, 0), (3, 0), colors.HexColor('#fef9c3')),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
-        ('INNERGRID', (0, 0), (-1, -1), 1, WHITE),
-        ('BOX', (0, 0), (-1, -1), 1, GREY_200),
-        ('ROUNDEDCORNERS', [5]),
-    ]))
-    story.append(stats)
-
-    # Attendance progress bar
-    story.append(Spacer(1, 3 * mm))
-    bar_w = CONTENT_W
-    bar_fill = bar_w * (pct / 100)
-    bar_color = GREEN if pct >= 75 else GOLD if pct >= 50 else RED
-    pbar = Drawing(bar_w, 8)
-    pbar.add(Rect(0, 0, bar_w, 8, rx=4, ry=4, fillColor=GREY_200, strokeColor=None))
-    if bar_fill > 0:
-        pbar.add(Rect(0, 0, bar_fill, 8, rx=4, ry=4, fillColor=bar_color, strokeColor=None))
-    story.append(pbar)
-    story.append(Paragraph(
-        f'<font size=7.5 color="{GREY_400.hexval()}">Attendance rate: {pct}% '
-        f'({n_pres} of {total} staff present)</font>',
-        ParagraphStyle('pb', fontName='Helvetica', alignment=TA_RIGHT, spaceAfter=2)))
-    story.append(Spacer(1, 4 * mm))
-
-    # ── PRESENT TABLE ──
-    if present_list:
-        sec_hdr = Table(
-            [[Paragraph(f'✓ Present Staff ({n_pres})',
-                        ParagraphStyle('sh', fontName='Helvetica-Bold',
-                                       fontSize=10, textColor=WHITE))]],
-            colWidths=[CONTENT_W])
-        sec_hdr.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), GREEN),
-            ('TOPPADDING', (0, 0), (-1, -1), 7),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
-            ('LEFTPADDING', (0, 0), (-1, -1), 10),
-            ('ROUNDEDCORNERS', [4]),
-        ]))
-        story.append(KeepTogether([sec_hdr]))
-        story.append(Spacer(1, 1.5 * mm))
-
-        hdr_s = ParagraphStyle('th', fontName='Helvetica-Bold', fontSize=8, textColor=WHITE)
-        p_rows = [[Paragraph('#', hdr_s), Paragraph('', hdr_s), Paragraph('Name', hdr_s),
-                   Paragraph('Department', hdr_s), Paragraph('Time In', hdr_s)]]
-        for i, (s, att) in enumerate(present_list, 1):
-            p_rows.append([
-                Paragraph(str(i), ParagraphStyle('ix', fontName='Helvetica', fontSize=8,
-                                                 textColor=GREY_400, alignment=TA_CENTER)),
-                make_avatar(s['name'][0], NAVY),
-                Paragraph(f'<b>{s["name"]}</b>',
-                          ParagraphStyle('nm', fontName='Helvetica', fontSize=9,
-                                         textColor=BLACK, leading=12)),
-                Paragraph(s['department'] or '—',
-                          ParagraphStyle('dm', fontName='Helvetica', fontSize=8.5,
-                                         textColor=GREY_600, leading=12)),
-                Paragraph(time_fmt(att['time_in'] if att else None),
-                          ParagraphStyle('tm', fontName='Helvetica-Bold', fontSize=8.5,
-                                         textColor=GREEN, alignment=TA_CENTER, leading=12)),
-            ])
-        row_fills = [('BACKGROUND', (0, i), (-1, i), WHITE if i % 2 == 1 else GREY_50)
-                     for i in range(1, len(p_rows))]
-        p_tbl = Table(p_rows, colWidths=[8 * mm, 8 * mm, 72 * mm, 55 * mm, 35 * mm],
-                      repeatRows=1)
-        p_tbl.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), NAVY),
-            ('BACKGROUND', (4, 0), (4, 0), LIME_DARK),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 8),
-            ('TOPPADDING', (0, 0), (-1, -1), 5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-            ('LEFTPADDING', (0, 0), (-1, -1), 5),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('ALIGN', (0, 0), (1, -1), 'CENTER'),
-            ('ALIGN', (4, 0), (4, -1), 'CENTER'),
-            ('LINEBELOW', (0, 0), (-1, -1), 0.5, GREY_200),
-            ('BOX', (0, 0), (-1, -1), 0.8, GREY_200),
-            *row_fills,
-        ]))
-        story.append(p_tbl)
-        story.append(Spacer(1, 5 * mm))
-
-    # ── ABSENT TABLE ──
-    if absent_list:
-        sec_hdr2 = Table(
-            [[Paragraph(f'✗ Absent Staff ({n_abs})',
-                        ParagraphStyle('sh2', fontName='Helvetica-Bold',
-                                       fontSize=10, textColor=WHITE))]],
-            colWidths=[CONTENT_W])
-        sec_hdr2.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), RED),
-            ('TOPPADDING', (0, 0), (-1, -1), 7),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
-            ('LEFTPADDING', (0, 0), (-1, -1), 10),
-            ('ROUNDEDCORNERS', [4]),
-        ]))
-        story.append(KeepTogether([sec_hdr2]))
-        story.append(Spacer(1, 1.5 * mm))
-
-        hdr_r = ParagraphStyle('thr', fontName='Helvetica-Bold', fontSize=8, textColor=WHITE)
-        a_rows = [[Paragraph('#', hdr_r), Paragraph('', hdr_r), Paragraph('Name', hdr_r),
-                   Paragraph('Department', hdr_r), Paragraph('Status', hdr_r)]]
-        for i, (s, att) in enumerate(absent_list, 1):
-            a_rows.append([
-                Paragraph(str(i), ParagraphStyle('ix2', fontName='Helvetica', fontSize=8,
-                                                 textColor=GREY_400, alignment=TA_CENTER)),
-                make_avatar(s['name'][0], RED),
-                Paragraph(f'<b>{s["name"]}</b>',
-                          ParagraphStyle('nm2', fontName='Helvetica', fontSize=9,
-                                         textColor=BLACK, leading=12)),
-                Paragraph(s['department'] or '—',
-                          ParagraphStyle('dm2', fontName='Helvetica', fontSize=8.5,
-                                         textColor=GREY_600, leading=12)),
-                Paragraph('Absent',
-                          ParagraphStyle('st2', fontName='Helvetica-Bold', fontSize=8,
-                                         textColor=RED, alignment=TA_CENTER)),
-            ])
-        row_fills_a = [('BACKGROUND', (0, i), (-1, i),
-                        WHITE if i % 2 == 1 else colors.HexColor('#fff8f8'))
-                       for i in range(1, len(a_rows))]
-        a_tbl = Table(a_rows, colWidths=[8 * mm, 8 * mm, 80 * mm, 60 * mm, 26 * mm],
-                      repeatRows=1)
-        a_tbl.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#b91c1c')),
-            ('BACKGROUND', (4, 0), (4, 0), RED),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 8),
-            ('TOPPADDING', (0, 0), (-1, -1), 5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-            ('LEFTPADDING', (0, 0), (-1, -1), 5),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('ALIGN', (0, 0), (1, -1), 'CENTER'),
-            ('ALIGN', (4, 0), (4, -1), 'CENTER'),
-            ('LINEBELOW', (0, 0), (-1, -1), 0.5, GREY_200),
-            ('BOX', (0, 0), (-1, -1), 0.8, GREY_200),
-            *row_fills_a,
-        ]))
-        story.append(a_tbl)
-
-    # ── FOOTER ──
-    story.append(Spacer(1, 6 * mm))
-    fl = Drawing(CONTENT_W, 1)
-    fl.add(Line(0, 0, CONTENT_W, 0, strokeColor=GREY_200, strokeWidth=1))
-    story.append(fl)
-    story.append(Spacer(1, 3 * mm))
-    ft = Table([[
-        Paragraph(f'<font size=7.5 color="{GREY_400.hexval()}">© 2026 Empower International Academy</font>',
-                  ParagraphStyle('fl', fontName='Helvetica', alignment=TA_LEFT)),
-        Paragraph(f'<font size=7.5 color="{GREY_400.hexval()}">EIA Staff Attendance &amp; Gadget Tracking System</font>',
-                  ParagraphStyle('fc', fontName='Helvetica', alignment=TA_CENTER)),
-        Paragraph(f'<font size=7.5 color="{GREY_400.hexval()}">Generated: {gen_str}</font>',
-                  ParagraphStyle('fr', fontName='Helvetica', alignment=TA_RIGHT)),
-    ]], colWidths=[CONTENT_W / 3] * 3)
-    ft.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 0),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
-    ]))
-    story.append(ft)
-
-    doc.build(story)
-    buffer.seek(0)
-    filename = f"EIA_Attendance_{selected_date.isoformat()}.pdf"
-    return send_file(buffer, mimetype='application/pdf',
-                     as_attachment=False, download_name=filename)
+        conn.execute("INSERT INTO students (full_name, class_name, created_by) VALUES (?,?,?)",
+                     (name, cls, admin))
+    return 'added'
 
 
-# ─────────────────────────────────────────────
-# 12-MONTH ATTENDANCE CALENDAR VIEW
-# ─────────────────────────────────────────────
+def _register_page(kind):
+    cfg = REGISTERS[kind]
+    table = cfg['table']
+    q = (request.args.get('q') or '').strip()[:60]
+    cls = (request.args.get('cls') or '').strip()[:30]
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        page = 1
 
-@app.route('/attendance/monthly')
-@login_required
-def attendance_monthly():
-    """Shows a 12-month summary of attendance records."""
-    today = local_today()
-    # Go back 11 full months + current month
-    start_date = (today.replace(day=1) - timedelta(days=335)).replace(day=1)
+    where, params = ["t.is_active=1"], []
+    if q:
+        where.append("t.full_name LIKE ? ESCAPE '\\'")
+        params.append(f"%{_like_escape(q)}%")
+    if cls:
+        where.append("t.class_name = ? COLLATE NOCASE")
+        params.append(cls)
+    clause = " AND ".join(where)
+    extra = (", (SELECT COUNT(*) FROM laptop_slots sl WHERE sl.student_id = t.id) AS slot_count, "
+             "(SELECT COUNT(*) FROM laptop_sessions se WHERE se.student_id = t.id "
+             "AND se.status='Out') AS is_out") if cfg['laptops'] else ""
 
     with get_db() as conn:
-        total_staff = conn.execute(
-            "SELECT COUNT(*) FROM staff WHERE is_active=1").fetchone()[0]
-        rows = conn.execute("""
-            SELECT date, COUNT(*) as present_count
-            FROM attendance
-            WHERE status='Present' AND date >= ?
-            GROUP BY date
-            ORDER BY date DESC
-        """, (start_date.isoformat(),)).fetchall()
+        total = conn.execute(f"SELECT COUNT(*) FROM {table} t WHERE {clause}", params).fetchone()[0]
+        pages = max(1, -(-total // REGISTER_PAGE_SIZE))
+        page = min(page, pages)
+        rows = conn.execute(
+            f"SELECT t.*{extra} FROM {table} t WHERE {clause} "
+            f"ORDER BY t.full_name COLLATE NOCASE LIMIT ? OFFSET ?",
+            params + [REGISTER_PAGE_SIZE, (page - 1) * REGISTER_PAGE_SIZE]).fetchall()
+        class_rows = conn.execute(
+            f"SELECT class_name, COUNT(*) AS c FROM {table} WHERE is_active=1 "
+            f"GROUP BY class_name").fetchall()
+        stats = None
+        if cfg['laptops']:
+            stats = conn.execute("""
+                SELECT
+                  SUM(CASE WHEN (SELECT COUNT(*) FROM laptop_slots sl WHERE sl.student_id=t.id)=0
+                           THEN 1 ELSE 0 END) AS no_timetable,
+                  SUM(CASE WHEN (SELECT COUNT(*) FROM laptop_slots sl WHERE sl.student_id=t.id)>0
+                            AND t.consent_at IS NULL THEN 1 ELSE 0 END) AS awaiting,
+                  SUM(CASE WHEN (SELECT COUNT(*) FROM laptop_slots sl WHERE sl.student_id=t.id)>0
+                            AND t.consent_at IS NOT NULL THEN 1 ELSE 0 END) AS ready
+                FROM laptop_students t WHERE t.is_active=1""").fetchone()
+    classes = sorted(((r['class_name'] or '(no class)', r['c']) for r in class_rows),
+                     key=lambda x: _natural_key(x[0]))
+    return render_template('registry.html', cfg=cfg, kind=kind, rows=rows, total=total,
+                           grand_total=sum(c for _, c in classes), classes=classes,
+                           q=q, cls=cls, page=page, pages=pages, stats=stats)
 
-    # date_str -> present_count
-    daily = {r['date']: r['present_count'] for r in rows}
 
-    # Build month groups
-    months = []
-    current = today.replace(day=1)
-    for _ in range(12):
-        months.append(current)
-        current = (current - timedelta(days=1)).replace(day=1)
-    months.reverse()
+def _register_add(kind):
+    cfg = REGISTERS[kind]
+    name = clean_person_name(request.form.get('name'))
+    cls = clean_class_name(request.form.get('cls'))
+    model = (request.form.get('laptop_model') or '').strip()[:60]
+    serial = (request.form.get('serial_no') or '').strip()[:40]
+    if len(name) < 3:
+        flash("Enter the student's full name.", 'danger')
+    elif not cls:
+        flash('Enter the class (for example P.5).', 'danger')
+    else:
+        admin = current_admin()
+        with get_db() as conn:
+            result = _register_add_one(conn, kind, name, cls, admin, model, serial)
+        if result == 'exists':
+            flash(f'{name} ({cls}) is already in the register.', 'info')
+        else:
+            log_activity(cfg['log_add'], f'{"Restored" if result == "restored" else "Added"} '
+                                         f'{name} ({cls}) in {cfg["title"]}')
+            flash(f'{name} ({cls}) {"restored" if result == "restored" else "added"}.', 'success')
+    return redirect(url_for(cfg['page']))
 
-    return render_template('attendance_monthly.html',
-                           months=months,
-                           daily=daily,
-                           total_staff=total_staff,
-                           today=today)
+
+def _register_remove(kind):
+    cfg = REGISTERS[kind]
+    table = cfg['table']
+    only = request.form.get('only')
+    raw = [only] if only else request.form.getlist('ids')
+    ids = [int(i) for i in raw if str(i).isdigit()][:500]
+    back = redirect(url_for(cfg['page'], q=request.form.get('q', ''), cls=request.form.get('cls', '')))
+    if not ids:
+        flash('Tick at least one student to remove.', 'warning')
+        return back
+    marks = ','.join('?' * len(ids))
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT id, full_name, class_name FROM {table} WHERE is_active=1 AND id IN ({marks})",
+            ids).fetchall()
+        blocked_ids = set()
+        if cfg['laptops'] and rows:
+            blocked_ids = {r['student_id'] for r in conn.execute(
+                f"SELECT DISTINCT student_id FROM laptop_sessions "
+                f"WHERE status='Out' AND student_id IN ({marks})", ids).fetchall()}
+        go = [r for r in rows if r['id'] not in blocked_ids]
+        if go:
+            m2 = ','.join('?' * len(go))
+            conn.execute(f"UPDATE {table} SET is_active=0 WHERE id IN ({m2})", [r['id'] for r in go])
+    if blocked_ids:
+        names = ', '.join(r['full_name'] for r in rows if r['id'] in blocked_ids)
+        flash(f'Not removed (laptop still signed out — sign it in first): {names}.', 'warning')
+    if go:
+        shown = ', '.join(f"{r['full_name']} ({r['class_name']})" for r in go[:5])
+        more = f' and {len(go) - 5} more' if len(go) > 5 else ''
+        log_activity(cfg['log_remove'], f'Removed {len(go)} from {cfg["title"]}: {shown}{more}')
+        flash(f'Removed {len(go)} student{"s" if len(go) != 1 else ""}.', 'success')
+    return back
+
+
+def _register_import(kind):
+    """Step 1: read the uploaded PDF (or pasted list) and show a preview. Nothing is saved yet."""
+    cfg = REGISTERS[kind]
+    default_cls = clean_class_name(request.form.get('default_class'))
+    pasted = request.form.get('pasted') or ''
+    upload = request.files.get('file')
+    try:
+        if upload and upload.filename:
+            data = upload.read()
+            fname = upload.filename
+            if fname.lower().endswith('.pdf') or data[:5] == b'%PDF-':
+                text = extract_pdf_text(data)
+            elif fname.lower().endswith(('.csv', '.txt')):
+                text = data.decode('utf-8-sig', errors='replace')
+            else:
+                raise ValueError('Please upload a PDF file (a .csv or .txt list also works).')
+            source = fname
+        elif pasted.strip():
+            text, source = pasted, 'pasted list'
+        else:
+            raise ValueError('Choose a PDF file, or paste a list of names.')
+    except ValueError as e:
+        flash(str(e), 'danger')
+        return redirect(url_for(cfg['page']))
+
+    rows, skipped = parse_student_text(text, default_cls)
+    if not rows:
+        flash('No student names were found in that file. Check that it lists full names, '
+              'or paste the names instead.', 'danger')
+        return redirect(url_for(cfg['page']))
+    truncated = len(rows) > MAX_IMPORT_ROWS
+    rows = rows[:MAX_IMPORT_ROWS]
+
+    with get_db() as conn:
+        existing = _register_existing(conn, cfg['table'])
+    seen, counts = set(), {'new': 0, 'restore': 0, 'exists': 0, 'dup': 0}
+    for i, r in enumerate(rows):
+        key = (r['name'].lower(), r['cls'].lower())
+        if key in seen:
+            r['status'] = 'dup'
+        elif key in existing and existing[key][1]:
+            r['status'] = 'exists'
+        elif key in existing:
+            r['status'] = 'restore'
+        else:
+            r['status'] = 'new'
+        seen.add(key)
+        counts[r['status']] += 1
+        r['idx'] = i
+    return render_template('registry_import.html', cfg=cfg, kind=kind, rows=rows,
+                           skipped=skipped[:40], skipped_total=len(skipped), counts=counts,
+                           source=source, truncated=truncated)
+
+
+def _register_import_confirm(kind):
+    """Step 2: save the rows the admin left ticked (after any edits in the preview)."""
+    cfg = REGISTERS[kind]
+    table = cfg['table']
+    try:
+        count = min(int(request.form.get('count', 0)), MAX_IMPORT_ROWS)
+    except ValueError:
+        count = 0
+    keep = set(request.form.getlist('keep'))
+    wanted, no_class = [], 0
+    for i in range(count):
+        if str(i) not in keep:
+            continue
+        name = clean_person_name(request.form.get(f'name_{i}'))
+        cls = clean_class_name(request.form.get(f'cls_{i}'))
+        if len(name) < 3:
+            continue
+        if not cls:
+            no_class += 1
+            continue
+        wanted.append((name, cls))
+
+    admin = current_admin()
+    added = restored = already = 0
+    with get_db() as conn:
+        existing = _register_existing(conn, table)
+        inserts, restores, seen = [], [], set()
+        for name, cls in wanted:
+            key = (name.lower(), cls.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            if key in existing:
+                if existing[key][1]:
+                    already += 1
+                else:
+                    restores.append(existing[key][0])
+            elif kind == 'laptop':
+                inserts.append(("INSERT OR IGNORE INTO laptop_students (full_name, class_name, "
+                                "created_by) VALUES (?,?,?)", (name, cls, admin)))
+            else:
+                inserts.append(("INSERT OR IGNORE INTO students (full_name, class_name, "
+                                "created_by) VALUES (?,?,?)", (name, cls, admin)))
+        restore_stmts = [(f"UPDATE {table} SET is_active=1 WHERE id=?", (rid,)) for rid in restores]
+        stmts = inserts + restore_stmts
+        for i in range(0, len(stmts), IMPORT_BATCH):
+            conn.run_batch(stmts[i:i + IMPORT_BATCH])
+        added, restored = len(inserts), len(restores)
+
+    if added or restored:
+        log_activity(cfg['log_import'],
+                     f'Imported into {cfg["title"]}: {added} added'
+                     + (f', {restored} restored' if restored else '')
+                     + (f', {already} already registered' if already else ''))
+    parts = [f'{added} added']
+    if restored:
+        parts.append(f'{restored} restored')
+    if already:
+        parts.append(f'{already} already in the register')
+    if no_class:
+        parts.append(f'{no_class} skipped (no class)')
+    flash('Import finished: ' + ', '.join(parts) + '.', 'success' if (added or restored) else 'info')
+    return redirect(url_for(cfg['page']))
+
+
+# — school students (tablet sign-out search) —
+@app.route('/students')
+@login_required
+def students_register():
+    return _register_page('students')
+
+
+@app.route('/students/add', methods=['POST'])
+@login_required
+def students_add():
+    return _register_add('students')
+
+
+@app.route('/students/remove', methods=['POST'])
+@login_required
+def students_remove():
+    return _register_remove('students')
+
+
+@app.route('/students/import', methods=['POST'])
+@login_required
+def students_import():
+    return _register_import('students')
+
+
+@app.route('/students/import/confirm', methods=['POST'])
+@login_required
+def students_import_confirm():
+    return _register_import_confirm('students')
+
+
+# — students with personal laptops —
+@app.route('/laptops/students')
+@login_required
+def laptop_students_register():
+    return _register_page('laptop')
+
+
+@app.route('/laptops/students/add', methods=['POST'])
+@login_required
+def laptop_students_add():
+    return _register_add('laptop')
+
+
+@app.route('/laptops/students/remove', methods=['POST'])
+@login_required
+def laptop_students_remove():
+    return _register_remove('laptop')
+
+
+@app.route('/laptops/students/import', methods=['POST'])
+@login_required
+def laptop_students_import():
+    return _register_import('laptop')
+
+
+@app.route('/laptops/students/import/confirm', methods=['POST'])
+@login_required
+def laptop_students_import_confirm():
+    return _register_import_confirm('laptop')
+
+
+@app.errorhandler(413)
+def _file_too_large(_e):
+    flash('That file is too large (the limit is 15 MB).', 'danger')
+    return redirect(request.referrer or url_for('dashboard'))
+
+
+# ─────────────────────────────────────────────
+# PERSONAL LAPTOPS
+# Students may take their laptop out ONLY during their timetable. Even an admin
+# cannot sign one out at any other time (see check_laptop_access above).
+# ─────────────────────────────────────────────
+
+def _laptop_slots(conn, student_id):
+    return conn.execute(
+        "SELECT * FROM laptop_slots WHERE student_id=? ORDER BY weekday, start_time",
+        (student_id,)).fetchall()
+
+
+def _laptop_student(conn, student_id):
+    return conn.execute(
+        "SELECT * FROM laptop_students WHERE id=? AND is_active=1", (student_id,)).fetchone()
+
+
+def _laptop_is_out(conn, student_id):
+    return conn.execute(
+        "SELECT id FROM laptop_sessions WHERE student_id=? AND status='Out'",
+        (student_id,)).fetchone() is not None
+
+
+def _reset_consent(conn, student_id):
+    """Any change to a timetable must be agreed by the student again."""
+    conn.execute("UPDATE laptop_students SET consent_by=NULL, consent_at=NULL WHERE id=?",
+                 (student_id,))
+
+
+def _laptop_device(row):
+    bits = [row['laptop_model'] or '', row['serial_no'] or '']
+    return ' · S/N '.join(b for b in bits if b) if all(bits) else (bits[0] or (f"S/N {bits[1]}" if bits[1] else '—'))
+
+
+def _laptop_session_payload(r):
+    return {
+        'id': r['id'],
+        'student_id': r['student_id'],
+        'student': r['full_name'],
+        'class': r['class_name'] or '',
+        'laptop': _laptop_device(r),
+        'slot': (f"{fmt12(r['slot_start'])} – {fmt12(r['slot_end'])}"
+                 if r['slot_start'] and r['slot_end'] else '—'),
+        'out': fmt_dt(r['sign_out_time']),
+        'by': r['signed_out_by'] or '',
+        'expected': fmt_dt_time(r['expected_return_time']),
+        'due_ms': _to_ms(r['expected_return_time']),
+    }
+
+
+_LAPTOP_SESSION_SELECT = """
+    SELECT se.*, t.full_name, t.class_name, t.laptop_model, t.serial_no
+    FROM laptop_sessions se JOIN laptop_students t ON t.id = se.student_id
+"""
+
+
+def _laptop_overdue_rows(conn):
+    now = datetime.utcnow().isoformat()
+    return conn.execute(
+        _LAPTOP_SESSION_SELECT +
+        " WHERE se.status='Out' AND se.expected_return_time < ? "
+        "ORDER BY se.expected_return_time", (now,)).fetchall()
+
+
+def _laptop_overdue_payload(rows):
+    return [_laptop_session_payload(r) for r in rows]
+
+
+@app.route('/laptops')
+@login_required
+def laptop_desk():
+    now_local = local_now()
+    now_utc = datetime.utcnow().isoformat()
+    with get_db() as conn:
+        students = conn.execute(
+            "SELECT * FROM laptop_students WHERE is_active=1 "
+            "ORDER BY full_name COLLATE NOCASE").fetchall()
+        slot_rows = conn.execute(
+            "SELECT sl.* FROM laptop_slots sl JOIN laptop_students t ON t.id = sl.student_id "
+            "WHERE t.is_active=1 ORDER BY sl.weekday, sl.start_time").fetchall()
+        out_rows = conn.execute(
+            _LAPTOP_SESSION_SELECT + " WHERE se.status='Out' ORDER BY se.expected_return_time"
+        ).fetchall()
+        recent = conn.execute(
+            _LAPTOP_SESSION_SELECT + " WHERE se.status='Returned' "
+            "ORDER BY se.sign_back_time DESC LIMIT 10").fetchall()
+
+    slots_by = {}
+    for s in slot_rows:
+        slots_by.setdefault(s['student_id'], []).append(s)
+    out_ids = {r['student_id'] for r in out_rows}
+
+    people, allowed_now = [], []
+    for st in students:
+        slots = slots_by.get(st['id'], [])
+        verdict = check_laptop_access(st['full_name'], slots, bool(st['consent_at']),
+                                      st['id'] in out_ids, now_local)
+        people.append({
+            'id': st['id'], 'n': st['full_name'], 'c': st['class_name'] or '',
+            'laptop': _laptop_device(st), 'consent': bool(st['consent_at']),
+            'out': st['id'] in out_ids,
+            'slots': [[int(s['weekday']), s['start_time'], s['end_time']] for s in slots],
+        })
+        if verdict['ok']:
+            allowed_now.append({'id': st['id'], 'n': st['full_name'], 'c': st['class_name'] or '',
+                                'until': fmt12(verdict['slot']['end_time'])})
+
+    out_payload = _laptop_session_payload
+    out_list = [dict(out_payload(r), overdue=(r['expected_return_time'] < now_utc)) for r in out_rows]
+    recent_list = []
+    for r in recent:
+        late = bool(r['sign_back_time'] and r['sign_back_time'] > r['expected_return_time'])
+        recent_list.append({
+            'student': r['full_name'], 'class': r['class_name'] or '',
+            'slot': (f"{fmt12(r['slot_start'])} – {fmt12(r['slot_end'])}" if r['slot_start'] else '—'),
+            'out': fmt_dt(r['sign_out_time']), 'back': fmt_dt(r['sign_back_time']),
+            'late': late, 'by': r['signed_out_by'] or '', 'back_by': r['signed_back_by'] or ''})
+
+    pre = request.args.get('student', '')
+    return render_template(
+        'laptop_desk.html', people=people, out_list=out_list, recent=recent_list,
+        allowed_now=allowed_now, overdue_n=sum(1 for o in out_list if o['overdue']),
+        preselect=int(pre) if pre.isdigit() else None, admin=current_admin(),
+        server_now_ms=int(_time.time() * 1000), tz_name=APP_TZ_NAME)
+
+
+@app.route('/laptops/signout', methods=['POST'])
+@login_required
+def laptop_signout():
+    admin = current_admin()
+    sid = request.form.get('student_id', '')
+    back = redirect(url_for('laptop_desk', student=sid if sid.isdigit() else None))
+    if not sid.isdigit():
+        flash('Choose a student first.', 'danger')
+        return back
+    now_local = local_now()
+    with get_db() as conn:
+        st = _laptop_student(conn, int(sid))
+        if not st:
+            flash('That student is not in the laptop register.', 'danger')
+            return redirect(url_for('laptop_desk'))
+        verdict = check_laptop_access(
+            st['full_name'], _laptop_slots(conn, st['id']), bool(st['consent_at']),
+            _laptop_is_out(conn, st['id']), now_local)
+        if not verdict['ok']:
+            log_activity('laptop_blocked',
+                         f"Blocked: {st['full_name']} ({st['class_name']}) — {verdict['message']}")
+            flash('Not allowed. ' + verdict['message'], 'danger')
+            return back
+        slot = verdict['slot']
+        end_h, end_m = divmod(hhmm_to_min(slot['end_time']), 60)
+        due_local = now_local.replace(hour=end_h, minute=end_m, second=0, microsecond=0)
+        # the NOT EXISTS makes a double click / two admins at once safe
+        res = conn.execute("""
+            INSERT INTO laptop_sessions (student_id, slot_start, slot_end, sign_out_time,
+                                         expected_return_time, signed_out_by, status)
+            SELECT ?,?,?,?,?,?,'Out'
+            WHERE NOT EXISTS (SELECT 1 FROM laptop_sessions WHERE student_id=? AND status='Out')
+        """, (st['id'], slot['start_time'], slot['end_time'], to_utc_iso(now_local),
+              to_utc_iso(due_local), admin, st['id']))
+        if not res.rowcount:
+            flash(f"{st['full_name']} already has a laptop signed out.", 'info')
+            return back
+    due = fmt12(slot['end_time'])
+    log_activity('laptop_signout', f"Signed out laptop to {st['full_name']} ({st['class_name']}), "
+                                   f"due back at {due}")
+    flash(f"Laptop signed out to {st['full_name']}. Slot {slot_label(slot)} — due back by {due}. "
+          f"Approved by {admin}.", 'success')
+    return redirect(url_for('laptop_desk'))
+
+
+@app.route('/laptops/return/<int:session_id>', methods=['POST'])
+@login_required
+def laptop_return(session_id):
+    admin = current_admin()
+    back = redirect(url_for('laptop_overdue_page') if request.form.get('next') == 'overdue'
+                    else url_for('laptop_desk'))
+    now = datetime.utcnow().isoformat()
+    with get_db() as conn:
+        se = conn.execute(
+            "SELECT se.status, se.expected_return_time, t.full_name, t.class_name "
+            "FROM laptop_sessions se JOIN laptop_students t ON t.id = se.student_id "
+            "WHERE se.id=?", (session_id,)).fetchone()
+        if not se:
+            flash('Laptop session not found.', 'danger')
+            return back
+        if se['status'] != 'Out':
+            flash(f"{se['full_name']}'s laptop was already signed in.", 'info')
+            return back
+        conn.execute("UPDATE laptop_sessions SET status='Returned', sign_back_time=?, "
+                     "signed_back_by=? WHERE id=? AND status='Out'", (now, admin, session_id))
+    late_min = int((datetime.fromisoformat(now) -
+                    datetime.fromisoformat(se['expected_return_time'])).total_seconds() // 60)
+    note = 'on time' if late_min <= 0 else f'{late_min} min late'
+    log_activity('laptop_return', f"Signed in laptop from {se['full_name']} ({se['class_name']}) — {note}")
+    flash(f"{se['full_name']}'s laptop signed in by {admin} ({note}).",
+          'success' if late_min <= 0 else 'warning')
+    return back
+
+
+@app.route('/laptops/overdue')
+@login_required
+def laptop_overdue_page():
+    with get_db() as conn:
+        rows = _laptop_overdue_rows(conn)
+    return render_template('laptop_overdue.html', overdue=_laptop_overdue_payload(rows),
+                           server_now_ms=int(_time.time() * 1000))
+
+
+# — timetable editor (admin-created, with the student's consent) —
+
+def _timetable_back(sid):
+    return redirect(url_for('laptop_timetable', sid=sid))
+
+
+@app.route('/laptops/students/<int:sid>/timetable')
+@login_required
+def laptop_timetable(sid):
+    now_local = local_now()
+    with get_db() as conn:
+        st = _laptop_student(conn, sid)
+        if not st:
+            flash('Student not found.', 'danger')
+            return redirect(url_for('laptop_students_register'))
+        slots = _laptop_slots(conn, sid)
+        is_out = _laptop_is_out(conn, sid)
+    verdict = check_laptop_access(st['full_name'], slots, bool(st['consent_at']), is_out, now_local)
+    days = [[] for _ in range(7)]
+    total_min = 0
+    for s in slots:
+        days[int(s['weekday'])].append(s)
+        total_min += hhmm_to_min(s['end_time']) - hhmm_to_min(s['start_time'])
+    return render_template('laptop_timetable.html', st=st, slots=slots, days=days, verdict=verdict,
+                           total_hours=round(total_min / 60, 1), today_wd=now_local.weekday(),
+                           consent_at=st['consent_at'], is_out=is_out)
+
+
+@app.route('/laptops/students/<int:sid>/timetable/add', methods=['POST'])
+@login_required
+def laptop_timetable_add(sid):
+    days = sorted({d for d in request.form.getlist('days') if d.isdigit()})
+    start = (request.form.get('start') or '').strip()
+    end = (request.form.get('end') or '').strip()
+    if not days:
+        flash('Tick at least one day.', 'danger')
+        return _timetable_back(sid)
+    with get_db() as conn:
+        st = _laptop_student(conn, sid)
+        if not st:
+            flash('Student not found.', 'danger')
+            return redirect(url_for('laptop_students_register'))
+        existing = list(_laptop_slots(conn, sid))
+        planned, errors = [], []
+        for d in days:
+            err, a, b = validate_slot(d, start, end, existing + planned)
+            if err:
+                errors.append(err)
+            else:
+                planned.append({'weekday': int(d), 'start_time': min_to_hhmm(a),
+                                'end_time': min_to_hhmm(b)})
+        if errors:
+            for e in errors[:3]:
+                flash(e, 'danger')
+            flash('Nothing was saved. Fix the problem above and try again.', 'warning')
+            return _timetable_back(sid)
+        conn.run_batch([("INSERT INTO laptop_slots (student_id, weekday, start_time, end_time) "
+                         "VALUES (?,?,?,?)", (sid, p['weekday'], p['start_time'], p['end_time']))
+                        for p in planned])
+        _reset_consent(conn, sid)
+    names = ', '.join(WD_SHORT[p['weekday']] for p in planned)
+    log_activity('timetable_edit', f"Added slot {fmt12(start)}–{fmt12(end)} ({names}) to "
+                                   f"{st['full_name']}'s timetable")
+    flash(f'Added {fmt12(start)} – {fmt12(end)} on {names}. Record the student\'s consent '
+          f'again before laptops can be signed out.', 'success')
+    return _timetable_back(sid)
+
+
+@app.route('/laptops/students/<int:sid>/timetable/slot/<int:slot_id>', methods=['POST'])
+@login_required
+def laptop_timetable_edit(sid, slot_id):
+    with get_db() as conn:
+        st = _laptop_student(conn, sid)
+        slots = list(_laptop_slots(conn, sid))
+        mine = next((s for s in slots if s['id'] == slot_id), None)
+        if not st or not mine:
+            flash('Slot not found.', 'danger')
+            return _timetable_back(sid)
+        wd = request.form.get('weekday')
+        start = (request.form.get('start') or '').strip()
+        end = (request.form.get('end') or '').strip()
+        err, a, b = validate_slot(wd, start, end, [s for s in slots if s['id'] != slot_id])
+        if err:
+            flash(err, 'danger')
+            return _timetable_back(sid)
+        conn.execute("UPDATE laptop_slots SET weekday=?, start_time=?, end_time=? WHERE id=?",
+                     (int(wd), min_to_hhmm(a), min_to_hhmm(b), slot_id))
+        _reset_consent(conn, sid)
+    log_activity('timetable_edit',
+                 f"Changed {st['full_name']}'s slot {WD_SHORT[int(mine['weekday'])]} "
+                 f"{slot_label(mine)} → {WD_SHORT[int(wd)]} {fmt12(start)} – {fmt12(end)}")
+    flash('Slot updated. Record the student\'s consent again before laptops can be signed out.',
+          'success')
+    return _timetable_back(sid)
+
+
+@app.route('/laptops/students/<int:sid>/timetable/slot/<int:slot_id>/delete', methods=['POST'])
+@login_required
+def laptop_timetable_delete(sid, slot_id):
+    with get_db() as conn:
+        st = _laptop_student(conn, sid)
+        mine = next((s for s in _laptop_slots(conn, sid) if s['id'] == slot_id), None)
+        if not st or not mine:
+            flash('Slot not found.', 'danger')
+            return _timetable_back(sid)
+        conn.execute("DELETE FROM laptop_slots WHERE id=? AND student_id=?", (slot_id, sid))
+        _reset_consent(conn, sid)
+    log_activity('timetable_edit', f"Removed {WD_SHORT[int(mine['weekday'])]} {slot_label(mine)} "
+                                   f"from {st['full_name']}'s timetable")
+    flash('Slot removed. Record the student\'s consent again before laptops can be signed out.',
+          'success')
+    return _timetable_back(sid)
+
+
+@app.route('/laptops/students/<int:sid>/timetable/consent', methods=['POST'])
+@login_required
+def laptop_timetable_consent(sid):
+    admin = current_admin()
+    with get_db() as conn:
+        st = _laptop_student(conn, sid)
+        if not st:
+            flash('Student not found.', 'danger')
+            return redirect(url_for('laptop_students_register'))
+        if not _laptop_slots(conn, sid):
+            flash('Add at least one slot before recording consent.', 'danger')
+            return _timetable_back(sid)
+        if 'agree' not in request.form:
+            flash("Tick the box to confirm the student agreed to this timetable.", 'danger')
+            return _timetable_back(sid)
+        conn.execute("UPDATE laptop_students SET consent_by=?, consent_at=? WHERE id=?",
+                     (admin, datetime.utcnow().isoformat(), sid))
+    log_activity('timetable_consent', f"Recorded {st['full_name']}'s agreement to their laptop timetable")
+    flash(f"Consent recorded for {st['full_name']}. Their laptop can now be signed out during the slots.",
+          'success')
+    return _timetable_back(sid)
+
+
+@app.route('/laptops/students/<int:sid>/edit', methods=['POST'])
+@login_required
+def laptop_student_edit(sid):
+    name = clean_person_name(request.form.get('name'))
+    cls = clean_class_name(request.form.get('cls'))
+    model = (request.form.get('laptop_model') or '').strip()[:60]
+    serial = (request.form.get('serial_no') or '').strip()[:40]
+    if len(name) < 3 or not cls:
+        flash('Enter the full name and the class.', 'danger')
+        return _timetable_back(sid)
+    with get_db() as conn:
+        st = _laptop_student(conn, sid)
+        if not st:
+            flash('Student not found.', 'danger')
+            return redirect(url_for('laptop_students_register'))
+        clash = conn.execute(
+            "SELECT id FROM laptop_students WHERE full_name = ? COLLATE NOCASE "
+            "AND class_name = ? COLLATE NOCASE AND id <> ?", (name, cls, sid)).fetchone()
+        if clash:
+            flash('Another student with that name and class is already registered.', 'danger')
+            return _timetable_back(sid)
+        conn.execute("UPDATE laptop_students SET full_name=?, class_name=?, laptop_model=?, "
+                     "serial_no=? WHERE id=?", (name, cls, model, serial, sid))
+    log_activity('laptop_student_edit', f'Updated details of {name} ({cls})')
+    flash('Details saved.', 'success')
+    return _timetable_back(sid)
 
 
 # ─────────────────────────────────────────────
@@ -1249,17 +1878,23 @@ def api_overdue():
 
 @app.route('/api/tablet-status')
 def api_tablet_status():
-    """Live tablet numbers + overdue list. Polled every few seconds by main.js
-    so the banner and dashboard update without a page reload."""
+    """Live tablet + laptop numbers and overdue lists. Polled every few seconds by
+    main.js so the banner, menu badges and dashboard update without a page reload."""
     if not _api_admin_ok():
         return jsonify({'error': 'login required'}), 401
     with get_db() as conn:
         c = conn.execute(
             "SELECT (SELECT COUNT(*) FROM tablets WHERE is_active=1) AS total, "
-            "(SELECT COUNT(*) FROM tablet_transactions WHERE status='Borrowed') AS borrowed"
+            "(SELECT COUNT(*) FROM tablet_transactions WHERE status='Borrowed') AS borrowed, "
+            "(SELECT COUNT(*) FROM laptop_students WHERE is_active=1) AS lap_students, "
+            "(SELECT COUNT(DISTINCT se.student_id) FROM laptop_sessions se "
+            " JOIN laptop_students ls ON ls.id = se.student_id "
+            " WHERE se.status='Out' AND ls.is_active=1) AS lap_out"
         ).fetchone()
         rows = _overdue_rows(conn)
+        lap_rows = _laptop_overdue_rows(conn)
     total, borrowed, overdue_n = c['total'], c['borrowed'], len(rows)
+    lap_students, lap_out, lap_overdue_n = c['lap_students'], c['lap_out'], len(lap_rows)
     resp = jsonify({
         'counts': {
             'total': total,
@@ -1270,6 +1905,15 @@ def api_tablet_status():
         # same maths as the dashboard's Tablet Status chart
         'chart': [max(total - borrowed, 0), max(borrowed - overdue_n, 0), overdue_n],
         'overdue': _overdue_payload(rows),
+        'laptops': {
+            'students': lap_students,
+            'out': lap_out,
+            'in_storage': max(lap_students - lap_out, 0),
+            'overdue': lap_overdue_n,
+        },
+        'laptop_chart': [max(lap_students - lap_out, 0), max(lap_out - lap_overdue_n, 0),
+                         lap_overdue_n],
+        'laptop_overdue': _laptop_overdue_payload(lap_rows),
         'server_ms': int(_time.time() * 1000),
     })
     resp.headers['Cache-Control'] = 'no-store'
@@ -1280,17 +1924,12 @@ def api_tablet_status():
 # TEMPLATE FILTERS
 # ─────────────────────────────────────────────
 
-@app.template_filter('fmt_time')
-def fmt_time(value):
-    """Attendance time-in (stored as UTC HH:MM:SS) -> local 12-hour time."""
-    if not value:
-        return '—'
+@app.template_filter('fmt12')
+def _fmt12_filter(value):
     try:
-        t = datetime.strptime(value, '%H:%M:%S').time()
-        utc_dt = datetime.combine(datetime.now(timezone.utc).date(), t, tzinfo=timezone.utc)
-        return utc_dt.astimezone(APP_TZ).strftime('%I:%M %p')
+        return fmt12(value)
     except Exception:
-        return value
+        return value or ''
 
 
 @app.template_filter('fmt_dt')
