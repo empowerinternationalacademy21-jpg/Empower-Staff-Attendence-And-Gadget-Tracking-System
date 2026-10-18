@@ -32,13 +32,13 @@ function setBadges(selector, n) {
     el.classList.toggle('hidden', n === 0);
   });
 }
-function updateBadges(tablets, laptops) {
+function updateBadges(tablets, gadgets) {
   setBadges('[data-overdue-count]', tablets);
-  setBadges('[data-laptop-overdue-count]', laptops);
+  setBadges('[data-gadget-overdue-count]', gadgets);
 }
 
 // Clicking the red banner opens the matching Overdue page
-// (tablets first; laptops when only laptops are overdue)
+// (tablets first; gadgets when only gadgets are overdue)
 let bannerTarget = overdueBanner ? overdueBanner.dataset.href : '';
 if (overdueBanner) {
   overdueBanner.addEventListener('click', () => {
@@ -46,16 +46,16 @@ if (overdueBanner) {
   });
 }
 
-function renderBanner(tablets, laptops) {
-  if (!tablets.length && !laptops.length) {
+function renderBanner(tablets, gadgets) {
+  if (!tablets.length && !gadgets.length) {
     overdueBanner.classList.add('hidden');
     overdueBanner.textContent = '';
     return;
   }
   const lines = tablets.map(t =>
       `⚠️ ${t.tablet} overdue — Borrowed by ${t.student} (Expected: ${t.expected})`)
-    .concat(laptops.map(t =>
-      `💻 ${t.student} (${t['class']}) laptop overdue — was due ${t.expected}`));
+    .concat(gadgets.map(t =>
+      `💻 ${t.student} (${t['class']}) gadget overdue — was due ${t.expected}`));
   overdueBanner.textContent = '';
   const icon = document.createElement('i');
   icon.className = 'fas fa-bell';
@@ -63,18 +63,18 @@ function renderBanner(tablets, laptops) {
   overdueBanner.appendChild(document.createTextNode('\u00A0\u00A0' + lines.join('   |   ')));
   overdueBanner.classList.remove('hidden');
   bannerTarget = tablets.length ? overdueBanner.dataset.href
-                                : (overdueBanner.dataset.hrefLaptops || overdueBanner.dataset.href);
+                                : (overdueBanner.dataset.hrefGadgets || overdueBanner.dataset.href);
 }
 
-// One desktop notification per newly-overdue item (tablet ids and laptop ids are kept apart)
-function notifyNew(tablets, laptops) {
+// One desktop notification per newly-overdue item (tablet ids and gadget ids are kept apart)
+function notifyNew(tablets, gadgets) {
   const notified = getNotified();
   const items = tablets.map(t => ({
       key: 'T' + t.id, title: 'EIA System — Overdue Tablet',
       body: `${t.tablet} — Borrowed by ${t.student}. Expected at ${t.expected}.` }))
-    .concat(laptops.map(t => ({
-      key: 'L' + t.id, title: 'EIA System — Overdue Laptop',
-      body: `${t.student} (${t['class']}) — laptop was due at ${t.expected}.` })));
+    .concat(gadgets.map(t => ({
+      key: 'L' + t.id, title: 'EIA System — Overdue Gadget',
+      body: `${t.student} (${t['class']}) — gadget was due at ${t.expected}.` })));
   items.forEach(it => {
     if (!notified.has(it.key) && 'Notification' in window &&
         Notification.permission === 'granted') {
@@ -100,10 +100,10 @@ function checkStatus() {
     })
     .then(data => {
       if (!data) return;
-      const laptops = data.laptop_overdue || [];
-      renderBanner(data.overdue, laptops);
-      updateBadges(data.overdue.length, laptops.length);
-      notifyNew(data.overdue, laptops);
+      const gadgets = data.gadget_overdue || [];
+      renderBanner(data.overdue, gadgets);
+      updateBadges(data.overdue.length, gadgets.length);
+      notifyNew(data.overdue, gadgets);
       // Let any page (e.g. the dashboard) update itself with the fresh numbers
       document.dispatchEvent(new CustomEvent('tablet-status', { detail: data }));
     })
