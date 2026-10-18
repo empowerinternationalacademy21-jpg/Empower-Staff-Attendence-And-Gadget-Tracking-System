@@ -1,0 +1,111 @@
+{% extends 'base.html' %}
+{% block title %}Promote classes — {{ cfg.title }}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><i class="fas fa-level-up-alt"></i> Promote Classes</h1>
+    <p class="pr-sub">Moves every student in <strong>{{ cfg.title }}</strong> up to the next year's class with one button. Check each class below first — nothing changes until you press the green button, and the last promotion can always be undone.</p>
+  </div>
+  <a href="{{ url_for(cfg.page) }}" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Back to register</a>
+</div>
+
+{% if last %}
+<div class="pr-undo">
+  <i class="fas fa-history"></i>
+  <span>Last class change: <strong>{{ last['n'] }} student{{ '' if last['n'] == 1 else 's' }}</strong>
+    ({{ last['gone'] }} left the school) by {{ last['who'] }} on {{ last['at']|fmt_dt }}.</span>
+  <form method="POST" action="{{ url_for(cfg.promote_undo) }}"
+        onsubmit='return confirm("Undo this class change and put those students back where they were?")'>
+    <input type="hidden" name="batch" value="{{ last['batch'] }}"/>
+    <button class="btn btn-sm btn-outline"><i class="fas fa-undo"></i> Undo it</button>
+  </form>
+</div>
+{% endif %}
+
+{% if plans %}
+<form method="POST" action="{{ url_for(cfg.promote_apply) }}" id="prForm">
+  <input type="hidden" name="count" value="{{ plans|length }}"/>
+  <div class="card" style="overflow-x:auto">
+    <table class="data-table">
+      <thead><tr><th>Current class</th><th>Students</th><th style="width:210px">What happens</th><th style="width:190px">New class</th><th></th></tr></thead>
+      <tbody>
+        {% for p in plans %}
+        <tr data-count="{{ p['count'] }}">
+          <td><input type="hidden" name="old_{{ loop.index0 }}" value="{{ p['old'] }}"/><span class="badge badge-blue">{{ p['old'] or '(no class)' }}</span></td>
+          <td><strong>{{ p['count'] }}</strong></td>
+          <td>
+            <select name="action_{{ loop.index0 }}" class="form-control pr-in act">
+              <option value="promote" {{ 'selected' if p['action'] == 'promote' else '' }}>Promote to…</option>
+              <option value="leave"   {{ 'selected' if p['action'] == 'leave' else '' }}>Leave the school</option>
+              <option value="keep"    {{ 'selected' if p['action'] == 'keep' else '' }}>Keep in this class</option>
+            </select>
+          </td>
+          <td><input type="text" name="target_{{ loop.index0 }}" value="{{ p['target'] }}" class="form-control pr-in tgt" placeholder="e.g. P.6"/></td>
+          <td class="pr-note">{{ p['note'] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pr-summary" id="prSummary"></div>
+  <div class="pr-actions">
+    <button class="btn btn-primary btn-lg" id="prGo"><i class="fas fa-level-up-alt"></i> Promote the whole school</button>
+    <span class="form-note">Students in a class set to “Leave the school” are removed from the register (their history is kept). If two students have the same name, the one who cannot move safely is skipped and reported.</span>
+  </div>
+</form>
+{% else %}
+<div class="empty-state small"><i class="fas fa-user-graduate"></i><p>There are no students in this register yet.</p></div>
+{% endif %}
+
+<style>
+  .pr-sub { margin: .35rem 0 0; font-size: .88rem; color: var(--ink-light); max-width: 720px; }
+  .pr-undo { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; background: #fff6e0; border: 1px solid #f1d9a0;
+             color: #7a5200; border-radius: 12px; padding: .7rem 1rem; margin: 1rem 0; font-size: .86rem; }
+  .pr-undo span { flex: 1; min-width: 220px; }
+  .pr-in { padding: .4rem .6rem; font-size: .88rem; }
+  .pr-note { font-size: .8rem; color: var(--ink-light); }
+  .pr-summary { margin: 1.1rem 0 .8rem; display: flex; gap: .7rem; flex-wrap: wrap; }
+  .pr-pill { border-radius: 999px; padding: .35rem .9rem; font-weight: 700; font-size: .85rem; }
+  .pr-pill.up { background: #e6f6ee; color: #0b7a47; }
+  .pr-pill.out { background: #fde8ea; color: #a31f2b; }
+  .pr-pill.stay { background: #eef1f8; color: var(--navy); }
+  .pr-actions { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 2rem; }
+  .pr-actions .form-note { flex: 1; min-width: 260px; }
+  .tgt:disabled { background: #f3f5fa; color: transparent; }
+</style>
+<script>
+(function () {
+  var form = document.getElementById('prForm');
+  if (!form) return;
+  var rows = [].slice.call(form.querySelectorAll('tbody tr'));
+  var summary = document.getElementById('prSummary'), go = document.getElementById('prGo');
+  var tally = {};
+  function refresh() {
+    var up = 0, out = 0, stay = 0, bad = false;
+    rows.forEach(function (tr) {
+      var act = tr.querySelector('.act').value, tgt = tr.querySelector('.tgt'), n = +tr.dataset.count;
+      tgt.disabled = act !== 'promote';
+      if (act === 'promote') { if (!tgt.value.trim()) bad = true; up += n; }
+      else if (act === 'leave') out += n; else stay += n;
+    });
+    tally = { up: up, out: out, stay: stay };
+    summary.innerHTML = '<span class="pr-pill up">' + up + ' move up</span>' +
+      '<span class="pr-pill out">' + out + ' leave the school</span>' +
+      '<span class="pr-pill stay">' + stay + ' stay in their class</span>';
+    go.disabled = bad || (up + out) === 0;
+    go.title = bad ? 'Type the new class for every class set to Promote' : '';
+  }
+  form.addEventListener('change', refresh);
+  form.addEventListener('input', refresh);
+  form.addEventListener('submit', function (e) {
+    var msg = 'Promote ' + tally.up + ' student' + (tally.up === 1 ? '' : 's') +
+      (tally.out ? ' and remove ' + tally.out + ' who are leaving the school' : '') +
+      '?\n\nYou can undo this afterwards from this page.';
+    if (!confirm(msg)) e.preventDefault();
+  });
+  refresh();
+})();
+</script>
+{% endblock %}
