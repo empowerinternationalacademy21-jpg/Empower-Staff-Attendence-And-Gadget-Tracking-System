@@ -23,12 +23,13 @@
 
 <form method="POST" action="{{ url_for(cfg.confirm) }}">
   <input type="hidden" name="count" value="{{ rows|length }}"/>
+  {% if cfg.gadgets %}<input type="hidden" name="default_type" value="{{ default_type }}"/>{% endif %}
   <section class="section">
     <div class="card" style="overflow-x:auto">
       <table class="data-table">
         <thead><tr>
           <th style="width:36px"><input type="checkbox" id="selAll" checked title="Select all"/></th>
-          <th>#</th><th>Full name</th><th style="width:170px">Class</th><th>Status</th>
+          <th>#</th><th>Full name</th><th style="width:170px">Class</th>{% if cfg.gadgets %}<th style="width:130px">Gadget</th>{% endif %}<th>Status</th>
         </tr></thead>
         <tbody>
           {% for r in rows %}
@@ -38,6 +39,11 @@
             <td class="ri-muted">{{ loop.index }}</td>
             <td><input type="text" name="name_{{ r['idx'] }}" value="{{ r['name'] }}" class="form-control ri-cell"/></td>
             <td><input type="text" name="cls_{{ r['idx'] }}" value="{{ r['cls'] }}" class="form-control ri-cell {{ '' if r['cls'] else 'ri-need' }}" placeholder="Class needed"/></td>
+            {% if cfg.gadgets %}
+            <td><select name="type_{{ r['idx'] }}" class="form-control ri-cell">
+              {% for t in gadget_types %}<option value="{{ t }}" {{ 'selected' if t == default_type else '' }}>{{ t }}</option>{% endfor %}
+            </select></td>
+            {% endif %}
             <td>
               {% if r['status'] == 'new' %}<span class="badge badge-green">New</span>
               {% elif r['status'] == 'restore' %}<span class="badge badge-yellow">Was removed — will be restored</span>
