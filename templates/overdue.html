@@ -47,7 +47,7 @@
         <tr>
           <th>Tablet</th><th>Student</th><th>Class</th><th>Qty</th>
           <th>Signed Out</th><th>Approved By</th><th>Was Due</th>
-          <th>Overdue By</th><th>Accessories</th><th>Action</th>
+          <th>Overdue By</th><th>Action</th>
         </tr>
       </thead>
       <tbody id="odBody"></tbody>
@@ -111,14 +111,6 @@
     return d + ' d' + (hh ? ' ' + hh + ' h' : '');
   }
 
-  function accessories(t) {
-    var a = '';
-    if (t.charger)   a += '<i class="fas fa-plug" title="Took charger"></i> ';
-    if (t.earphones) a += '<i class="fas fa-headphones" title="Took earphones"></i> ';
-    if (t.usb)       a += '<i class="fab fa-usb" title="Took USB"></i>';
-    return a || '—';
-  }
-
   function render(list) {
     var body = document.getElementById('odBody');
     var html = '';
@@ -134,7 +126,6 @@
         '<td>' + esc(t.expected) + '</td>' +
         '<td><span class="badge badge-red" data-due="' + esc(t.due_ms === null ? '' : t.due_ms) + '">' +
             esc(overdueText(t.due_ms)) + '</span></td>' +
-        '<td>' + accessories(t) + '</td>' +
         '<td><form method="POST" action="' + RETURN_URL.replace(/0$/, String(t.id)) + '" ' +
             'onsubmit="return confirm(\'Mark as returned?\')">' +
             '<input type="hidden" name="next" value="overdue">' +
