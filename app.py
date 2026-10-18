@@ -16,6 +16,7 @@ import time as _time
 from functools import wraps
 import hmac
 import re
+import secrets
 import os
 import io
 
@@ -100,16 +101,18 @@ ACTION_META = {
     'student_add':     ('Added student',         'fa-user-plus',    'a-green'),
     'student_remove':  ('Removed students',      'fa-user-minus',   'a-red'),
     'student_import':  ('Imported students',     'fa-file-import',  'a-blue'),
-    'laptop_student_add':    ('Added laptop student',    'fa-laptop',       'a-green'),
-    'laptop_student_edit':   ('Edited laptop student',   'fa-user-edit',    'a-blue'),
-    'laptop_student_remove': ('Removed laptop students', 'fa-user-minus',   'a-red'),
-    'laptop_import':   ('Imported laptop students', 'fa-file-import', 'a-blue'),
+    'laptop_student_add':    ('Added gadget student',    'fa-laptop',       'a-green'),
+    'laptop_student_edit':   ('Edited gadget student',   'fa-user-edit',    'a-blue'),
+    'laptop_student_remove': ('Removed gadget students', 'fa-user-minus',   'a-red'),
+    'laptop_import':   ('Imported gadget students', 'fa-file-import', 'a-blue'),
     'timetable_edit':  ('Edited timetable',      'fa-calendar-alt', 'a-blue'),
     'timetable_consent': ('Recorded consent',    'fa-signature',    'a-teal'),
     'timetable_pdf':   ('Timetable PDF',         'fa-file-pdf',     'a-blue'),
-    'laptop_signout':  ('Signed out laptop',     'fa-laptop',       'a-amber'),
-    'laptop_return':   ('Signed in laptop',      'fa-undo',         'a-teal'),
-    'laptop_blocked':  ('Laptop sign-out blocked', 'fa-ban',        'a-red'),
+    'class_promote':   ('Promoted / moved students', 'fa-level-up-alt', 'a-green'),
+    'class_undo':      ('Undid a class change',  'fa-undo',         'a-amber'),
+    'laptop_signout':  ('Signed out gadget',     'fa-laptop',       'a-amber'),
+    'laptop_return':   ('Signed in gadget',      'fa-undo',         'a-teal'),
+    'laptop_blocked':  ('Gadget sign-out blocked', 'fa-ban',        'a-red'),
     # kept only so older log entries still display properly
     'staff_add':       ('Added staff',           'fa-user-plus',    'a-green'),
     'staff_edit':      ('Edited staff',          'fa-user-edit',    'a-blue'),
@@ -267,13 +270,13 @@ def dashboard():
             ORDER BY tt.sign_back_time DESC LIMIT 5
         """).fetchall()
 
-        # ---- Personal laptops ----
+        # ---- Personal gadgets ----
         lap = conn.execute(
             "SELECT (SELECT COUNT(*) FROM laptop_students WHERE is_active=1) AS students, "
             "(SELECT COUNT(DISTINCT se.student_id) FROM laptop_sessions se "
             " JOIN laptop_students ls ON ls.id = se.student_id "
             " WHERE se.status='Out' AND ls.is_active=1) AS out_now").fetchone()
-        lap_overdue_rows = _laptop_overdue_rows(conn)
+        gad_overdue_rows = _gadget_overdue_rows(conn)
 
         # ---- Data for the dashboard charts ----
         since = (local_today() - timedelta(days=13)).isoformat()
@@ -289,7 +292,7 @@ def dashboard():
             "SELECT student_class AS cls, COUNT(*) AS c FROM tablet_transactions "
             "WHERE student_class IS NOT NULL AND student_class <> '' "
             "GROUP BY student_class ORDER BY c DESC LIMIT 8").fetchall()
-        lap_session_rows = conn.execute(
+        gad_session_rows = conn.execute(
             "SELECT sign_out_time, expected_return_time, sign_back_time, status "
             "FROM laptop_sessions WHERE substr(sign_out_time,1,10) >= ?",
             ((local_today() - timedelta(days=14)).isoformat(),)).fetchall()
@@ -299,15 +302,15 @@ def dashboard():
     days = [(local_today() - timedelta(days=i)) for i in range(13, -1, -1)]
     overdue_n = len(overdue)
 
-    # laptop sessions per (school) day: returned on time vs late / still overdue
+    # gadget sessions per (school) day: returned on time vs late / still overdue
     on_time, late = {}, {}
-    for r in lap_session_rows:
+    for r in gad_session_rows:
         day = to_local(r['sign_out_time']).date().isoformat()
         was_late = ((r['sign_back_time'] and r['sign_back_time'] > r['expected_return_time'])
                     or (not r['sign_back_time'] and r['expected_return_time'] < now))
         (late if was_late else on_time)[day] = (late if was_late else on_time).get(day, 0) + 1
 
-    lap_students, lap_out, lap_overdue_n = lap['students'], lap['out_now'], len(lap_overdue_rows)
+    gad_students, gad_out, gad_overdue_n = lap['students'], lap['out_now'], len(gad_overdue_rows)
     chart_data = {
         'tablet_status': {
             'labels': ['Available', 'Borrowed', 'Overdue'],
@@ -325,13 +328,13 @@ def dashboard():
             'labels': [r['cls'] for r in class_rows],
             'values': [r['c'] for r in class_rows],
         },
-        'laptop_status': {
+        'gadget_status': {
             'labels': ['In storage', 'Out (in session)', 'Overdue'],
-            'values': [max(lap_students - lap_out, 0), max(lap_out - lap_overdue_n, 0),
-                       lap_overdue_n],
-            'total': lap_students,
+            'values': [max(gad_students - gad_out, 0), max(gad_out - gad_overdue_n, 0),
+                       gad_overdue_n],
+            'total': gad_students,
         },
-        'laptop_daily': {
+        'gadget_daily': {
             'labels': [d.strftime('%d %b') for d in days],
             'on_time': [on_time.get(d.isoformat(), 0) for d in days],
             'late': [late.get(d.isoformat(), 0) for d in days],
@@ -354,11 +357,11 @@ def dashboard():
                            in_storage=max(total_tablets - borrowed_count, 0),
                            overdue_tablets=overdue,
                            recently_returned=recently_returned,
-                           lap_students=lap_students,
-                           lap_out=lap_out,
-                           lap_in=max(lap_students - lap_out, 0),
-                           lap_overdue_n=lap_overdue_n,
-                           overdue_laptops=_laptop_overdue_payload(lap_overdue_rows),
+                           gad_students=gad_students,
+                           gad_out=gad_out,
+                           gad_in=max(gad_students - gad_out, 0),
+                           gad_overdue_n=gad_overdue_n,
+                           overdue_gadgets=_gadget_overdue_payload(gad_overdue_rows),
                            today=local_today())
 
 
@@ -547,9 +550,6 @@ def tablet_signout():
                 quantity = max(1, min(int(request.form.get('quantity', 1)), 5))
             except ValueError:
                 quantity = 1
-            took_charger = 1 if 'took_charger' in request.form else 0
-            took_earphones = 1 if 'took_earphones' in request.form else 0
-            took_usb = 1 if 'took_usb' in request.form else 0
 
             now_local = local_now()
             ret_local, error = None, None
@@ -575,11 +575,10 @@ def tablet_signout():
                     INSERT INTO tablet_transactions
                         (tablet_id, student_name, student_class, quantity,
                          duration_hours, sign_out_time, expected_return_time,
-                         took_charger, took_earphones, took_usb, status, signed_out_by)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,'Borrowed',?)
+                         status, signed_out_by)
+                    VALUES (?,?,?,?,?,?,?,'Borrowed',?)
                 """, (tablet_db_id, student_name, student_class, quantity,
-                      duration_hours, to_utc_iso(now_local), to_utc_iso(ret_local),
-                      took_charger, took_earphones, took_usb, admin))
+                      duration_hours, to_utc_iso(now_local), to_utc_iso(ret_local), admin))
 
                 tab = conn.execute(
                     "SELECT tablet_id FROM tablets WHERE id=?", (tablet_db_id,)).fetchone()
@@ -695,9 +694,9 @@ def delete_tablet(tablet_id):
 
 
 # ─────────────────────────────────────────────
-# LAPTOP TIMETABLE RULES
+# GADGET TIMETABLE RULES
 # (pure functions: no database, no Flask — the single source of truth for
-#  "may this student take the laptop out right now?")
+#  "may this student take the gadget out right now?")
 # ─────────────────────────────────────────────
 
 WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -780,8 +779,8 @@ def describe_next(ahead, slot):
     return f"{when}, {slot_label(slot)}"
 
 
-def check_laptop_access(name, slots, consent_ok, is_out, now_local):
-    """Decide whether this student may take their laptop out RIGHT NOW.
+def check_gadget_access(name, slots, consent_ok, is_out, now_local):
+    """Decide whether this student may take their gadget out RIGHT NOW.
 
     There is deliberately NO admin override: outside the student's timetable
     the answer is always no. Returns a dict:
@@ -791,7 +790,7 @@ def check_laptop_access(name, slots, consent_ok, is_out, now_local):
         return {'ok': False, 'code': code, 'message': msg, 'slot': None}
 
     if is_out:
-        return deny('already_out', f'{name} already has a laptop signed out.')
+        return deny('already_out', f'{name} already has a gadget signed out.')
     if not slots:
         return deny('no_timetable', f'{name} has no timetable yet. Create one first.')
     if not consent_ok:
@@ -803,7 +802,7 @@ def check_laptop_access(name, slots, consent_ok, is_out, now_local):
     if active:
         return {'ok': True, 'code': 'ok', 'slot': active,
                 'message': f"Allowed — slot {slot_title(active)} today. "
-                           f"Laptop must be back by {fmt12(active['end_time'])}."}
+                           f"Gadget must be back by {fmt12(active['end_time'])}."}
 
     wd = now_local.weekday()
     nm = now_local.hour * 60 + now_local.minute
@@ -812,7 +811,7 @@ def check_laptop_access(name, slots, consent_ok, is_out, now_local):
     tail = (f" Next slot: {describe_next(ahead, nxt)}." if nxt else '')
     later = [s for s in today if hhmm_to_min(s['start_time']) > nm]
     if not today:
-        return deny('wrong_day', f"{name} has no laptop slot on {WEEKDAYS[wd]}." + tail)
+        return deny('wrong_day', f"{name} has no gadget slot on {WEEKDAYS[wd]}." + tail)
     if later:
         return deny('not_yet',
                     f"Too early. {name}'s slot today starts at "
@@ -868,7 +867,7 @@ _T = r'(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?'
 _RANGE_RE = re.compile(r'(?<![\d:.])' + _T + r'\s*(?:-|to|until)\s*' + _T + r'(?![\d:])', re.I)
 _EVENING_RE = re.compile(r'prep|evening|night|study|homework|boarding|supper', re.I)
 _LABEL_NOISE = {'from', 'at', 'and', 'to', 'on', 'every', 'each', 'the', 'time', 'times',
-                'slot', 'slots', 'laptop', 'laptops', 'allowed', '&'}
+                'slot', 'slots', 'gadget', 'gadgets', 'allowed', '&'}
 MAX_TIMETABLE_ROWS = 200
 
 
@@ -1181,7 +1180,7 @@ def extract_pdf_text(data, fallback='paste the names instead'):
 # ─────────────────────────────────────────────
 # STUDENT REGISTERS
 #   /students          every student in the school (feeds the tablet sign-out search)
-#   /laptops/students  students who own a personal laptop (feeds the laptop desk)
+#   /gadgets/students  students who own a personal gadget (feeds the gadget desk)
 # Both registers share the same add / remove / PDF-import code below.
 # ─────────────────────────────────────────────
 
@@ -1192,25 +1191,131 @@ MAX_IMPORT_ROWS = 3000
 REGISTERS = {
     'students': {
         'table': 'students', 'title': 'School Students', 'noun': 'student',
-        'icon': 'fa-user-graduate', 'laptops': False,
+        'icon': 'fa-user-graduate', 'gadgets': False,
         'page': 'students_register', 'add': 'students_add', 'remove': 'students_remove',
         'import': 'students_import', 'confirm': 'students_import_confirm',
+        'promote': 'students_promote', 'promote_apply': 'students_promote_apply',
+        'promote_undo': 'students_promote_undo', 'move': 'students_move',
         'log_add': 'student_add', 'log_remove': 'student_remove', 'log_import': 'student_import',
         'blurb': 'Every student in the school. On the tablet sign-out page an admin types a few '
                  'letters of a name and the full name and class fill in automatically.',
     },
-    'laptop': {
-        'table': 'laptop_students', 'title': 'Laptop Students', 'noun': 'student',
-        'icon': 'fa-laptop', 'laptops': True,
-        'page': 'laptop_students_register', 'add': 'laptop_students_add',
-        'remove': 'laptop_students_remove', 'import': 'laptop_students_import',
-        'confirm': 'laptop_students_import_confirm',
+    'gadget': {
+        'table': 'laptop_students', 'title': 'Gadget Students', 'noun': 'student',
+        'icon': 'fa-laptop', 'gadgets': True,
+        'page': 'gadget_students_register', 'add': 'gadget_students_add',
+        'remove': 'gadget_students_remove', 'import': 'gadget_students_import',
+        'confirm': 'gadget_students_import_confirm',
+        'promote': 'gadget_students_promote', 'promote_apply': 'gadget_students_promote_apply',
+        'promote_undo': 'gadget_students_promote_undo', 'move': 'gadget_students_move',
         'log_add': 'laptop_student_add', 'log_remove': 'laptop_student_remove',
         'log_import': 'laptop_import',
-        'blurb': 'Students who bring a personal laptop to school. Each one gets a timetable '
-                 '(agreed with the student) and can only collect the laptop during those times.',
+        'blurb': 'Students who bring a personal gadget to school. Each one gets a timetable '
+                 '(agreed with the student) and can only collect the gadget during those times.',
     },
 }
+
+
+# ─────────────────────────────────────────────
+# CLASS PROMOTION RULES (pure functions)
+#   next_class('P.5') -> {'label': 'P.6'}      moves up a year
+#   next_class('S.6') -> {'leave': True}       final class: the student leaves the school
+#   next_class('P.5 East') -> None             not recognised: the admin chooses
+# ─────────────────────────────────────────────
+
+_NUM_WORD_LIST = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE',
+                  'TEN', 'ELEVEN', 'TWELVE', 'THIRTEEN']
+
+# prefix -> (highest class number, what the next stage is called or None = leaves school)
+_PROMOTION_LADDERS = {
+    'P': (7, 'S'), 'PRI': (7, 'SEC'), 'PRIMARY': (7, 'SENIOR'), 'STD': (7, None), 'STANDARD': (7, None),
+    'S': (6, None), 'SEC': (6, None), 'SECONDARY': (6, None), 'SNR': (6, None), 'SENIOR': (6, None),
+    'F': (6, None), 'FORM': (6, None),
+    'Y': (13, None), 'YR': (13, None), 'YEAR': (13, None),
+    'G': (12, None), 'GRADE': (12, None), 'CLASS': (12, None),
+}
+_SECONDARY_PREFIXES = {'S', 'SEC', 'SECONDARY', 'SNR', 'SENIOR', 'F', 'FORM'}
+_CLASS_PARTS_RE = re.compile(
+    r'(?i)^(P|PRI|PRIMARY|STD|STANDARD|S|SEC|SECONDARY|SNR|SENIOR|F|FORM|Y|YR|YEAR|G|GRADE|CLASS)'
+    r'(\.?)(\s?-?\s?)(\d{1,2}|' + '|'.join(_NUM_WORD_LIST) + r')(\s?)([A-Z]?)$')
+
+
+def _match_case(word, like):
+    """Write `word` in the same style (UPPER / lower / Title) as `like`."""
+    if like.isupper():
+        return word.upper()
+    if like.islower():
+        return word.lower()
+    return word.capitalize()
+
+
+def is_secondary_class(label):
+    m = _CLASS_PARTS_RE.match((label or '').strip())
+    return bool(m and m.group(1).upper() in _SECONDARY_PREFIXES)
+
+
+def next_class(label, has_secondary=True):
+    """What class does a student in `label` move to next year?
+    Returns {'label': 'P.6'}, {'leave': True} (final year) or None (unknown class name).
+    `has_secondary`: does this school have secondary classes? If not, P.7 students leave."""
+    text = re.sub(r'\s+', ' ', (label or '')).strip()
+    if not text:
+        return None
+
+    # nursery stages
+    m = re.fullmatch(r'(?i)(baby|middle|top)(\s+class)?', text)
+    if m:
+        stage = m.group(1).lower()
+        if stage == 'top':
+            return {'label': 'P.1'}
+        nxt = 'Middle' if stage == 'baby' else 'Top'
+        return {'label': _match_case(nxt, m.group(1)) + (m.group(2) or '')}
+    m = re.fullmatch(r'(?i)(kg|nursery)\s?-?\s?(\d)', text)
+    if m:
+        n = int(m.group(2))
+        if n >= 3:
+            return {'label': 'P.1'}
+        sep = re.search(r'\d', text)
+        return {'label': text[:sep.start()] + str(n + 1)}
+    if re.fullmatch(r'(?i)(reception|pre-?\s?unit)', text):
+        return {'label': 'P.1'}
+
+    m = _CLASS_PARTS_RE.match(text)
+    if not m:
+        return None
+    prefix, dot, sep, num, gap, stream = m.groups()
+    ladder = _PROMOTION_LADDERS[prefix.upper()]
+    top, after = ladder
+    word_form = not num.isdigit()
+    n = (_NUM_WORD_LIST.index(num.upper()) + 1) if word_form else int(num)
+    if n > top:
+        return None
+    if n == top:                                    # final class of this stage
+        if after is None or (prefix.upper() in ('P', 'PRI', 'PRIMARY') and not has_secondary):
+            return {'leave': True}
+        new_prefix = _match_case(after, prefix)
+        first = _match_case(_NUM_WORD_LIST[0], num) if word_form else '1'
+        return {'label': f'{new_prefix}{dot}{sep}{first}'}    # stream letter is dropped on moving stage
+    new_num = _match_case(_NUM_WORD_LIST[n], num) if word_form else str(n + 1)
+    return {'label': f'{prefix}{dot}{sep}{new_num}{gap if stream else ""}{stream}'}
+
+
+def school_has_secondary(class_labels):
+    return any(is_secondary_class(c) for c in class_labels)
+
+
+GADGET_TYPES = ('Laptop', 'Tablet')
+GADGET_ICONS = {'Laptop': 'fa-laptop', 'Tablet': 'fa-tablet-alt'}
+
+
+def clean_gadget_type(raw):
+    """'laptop' / ' TABLET ' -> 'Laptop' / 'Tablet'; anything else -> '' (not chosen)."""
+    value = (raw or '').strip().title()
+    return value if value in GADGET_TYPES else ''
+
+
+app.jinja_env.globals['gadget_types'] = GADGET_TYPES
+app.jinja_env.globals['gadget_icons'] = GADGET_ICONS
 
 
 def _natural_key(text):
@@ -1235,22 +1340,23 @@ def _register_existing(conn, table):
             for r in rows}
 
 
-def _register_add_one(conn, kind, name, cls, admin, model='', serial=''):
+def _register_add_one(conn, kind, name, cls, admin, model='', serial='', gtype='Laptop'):
     """-> 'added' | 'restored' | 'exists'"""
     table = REGISTERS[kind]['table']
     row = _register_find(conn, table, name, cls)
     if row and row['is_active']:
         return 'exists'
     if row:
-        if kind == 'laptop':
-            conn.execute("UPDATE laptop_students SET is_active=1, laptop_model=?, serial_no=? "
-                         "WHERE id=?", (model, serial, row['id']))
+        if kind == 'gadget':
+            conn.execute("UPDATE laptop_students SET is_active=1, laptop_model=?, serial_no=?, "
+                         "gadget_type=? WHERE id=?", (model, serial, gtype, row['id']))
         else:
             conn.execute("UPDATE students SET is_active=1 WHERE id=?", (row['id'],))
         return 'restored'
-    if kind == 'laptop':
+    if kind == 'gadget':
         conn.execute("INSERT INTO laptop_students (full_name, class_name, laptop_model, serial_no, "
-                     "created_by) VALUES (?,?,?,?,?)", (name, cls, model, serial, admin))
+                     "gadget_type, created_by) VALUES (?,?,?,?,?,?)",
+                     (name, cls, model, serial, gtype, admin))
     else:
         conn.execute("INSERT INTO students (full_name, class_name, created_by) VALUES (?,?,?)",
                      (name, cls, admin))
@@ -1262,12 +1368,16 @@ def _register_page(kind):
     table = cfg['table']
     q = (request.args.get('q') or '').strip()[:60]
     cls = (request.args.get('cls') or '').strip()[:30]
+    gtype = clean_gadget_type(request.args.get('type')) if cfg['gadgets'] else ''
     try:
         page = max(1, int(request.args.get('page', 1)))
     except ValueError:
         page = 1
 
     where, params = ["t.is_active=1"], []
+    if gtype:
+        where.append("t.gadget_type = ?")
+        params.append(gtype)
     if q:
         where.append("t.full_name LIKE ? ESCAPE '\\'")
         params.append(f"%{_like_escape(q)}%")
@@ -1277,7 +1387,7 @@ def _register_page(kind):
     clause = " AND ".join(where)
     extra = (", (SELECT COUNT(*) FROM laptop_slots sl WHERE sl.student_id = t.id) AS slot_count, "
              "(SELECT COUNT(*) FROM laptop_sessions se WHERE se.student_id = t.id "
-             "AND se.status='Out') AS is_out") if cfg['laptops'] else ""
+             "AND se.status='Out') AS is_out") if cfg['gadgets'] else ""
 
     with get_db() as conn:
         total = conn.execute(f"SELECT COUNT(*) FROM {table} t WHERE {clause}", params).fetchone()[0]
@@ -1290,8 +1400,13 @@ def _register_page(kind):
         class_rows = conn.execute(
             f"SELECT class_name, COUNT(*) AS c FROM {table} WHERE is_active=1 "
             f"GROUP BY class_name").fetchall()
-        stats = None
-        if cfg['laptops']:
+        has_sec = _school_has_secondary(conn)
+        last_change = _last_class_change(conn, kind)
+        stats, type_counts = None, {}
+        if cfg['gadgets']:
+            type_counts = {r['gadget_type'] or 'Laptop': r['c'] for r in conn.execute(
+                "SELECT gadget_type, COUNT(*) AS c FROM laptop_students WHERE is_active=1 "
+                "GROUP BY gadget_type").fetchall()}
             stats = conn.execute("""
                 SELECT
                   SUM(CASE WHEN (SELECT COUNT(*) FROM laptop_slots sl WHERE sl.student_id=t.id)=0
@@ -1305,7 +1420,10 @@ def _register_page(kind):
                      key=lambda x: _natural_key(x[0]))
     return render_template('registry.html', cfg=cfg, kind=kind, rows=rows, total=total,
                            grand_total=sum(c for _, c in classes), classes=classes,
-                           q=q, cls=cls, page=page, pages=pages, stats=stats)
+                           q=q, cls=cls, page=page, pages=pages, stats=stats,
+                           gtype=gtype, type_counts=type_counts, gadget_types=GADGET_TYPES,
+                           gadget_icons=GADGET_ICONS, has_secondary=has_sec,
+                           last_change=last_change)
 
 
 def _register_add(kind):
@@ -1314,20 +1432,24 @@ def _register_add(kind):
     cls = clean_class_name(request.form.get('cls'))
     model = (request.form.get('laptop_model') or '').strip()[:60]
     serial = (request.form.get('serial_no') or '').strip()[:40]
+    gtype = clean_gadget_type(request.form.get('gadget_type')) if cfg['gadgets'] else ''
     if len(name) < 3:
         flash("Enter the student's full name.", 'danger')
     elif not cls:
         flash('Enter the class (for example P.5).', 'danger')
+    elif cfg['gadgets'] and not gtype:
+        flash('Choose the type of gadget: Laptop or Tablet.', 'danger')
     else:
         admin = current_admin()
         with get_db() as conn:
-            result = _register_add_one(conn, kind, name, cls, admin, model, serial)
+            result = _register_add_one(conn, kind, name, cls, admin, model, serial, gtype or 'Laptop')
         if result == 'exists':
             flash(f'{name} ({cls}) is already in the register.', 'info')
         else:
+            what = f' — {gtype}' if gtype else ''
             log_activity(cfg['log_add'], f'{"Restored" if result == "restored" else "Added"} '
-                                         f'{name} ({cls}) in {cfg["title"]}')
-            flash(f'{name} ({cls}) {"restored" if result == "restored" else "added"}.', 'success')
+                                         f'{name} ({cls}){what} in {cfg["title"]}')
+            flash(f'{name} ({cls}){what} {"restored" if result == "restored" else "added"}.', 'success')
     return redirect(url_for(cfg['page']))
 
 
@@ -1347,7 +1469,7 @@ def _register_remove(kind):
             f"SELECT id, full_name, class_name FROM {table} WHERE is_active=1 AND id IN ({marks})",
             ids).fetchall()
         blocked_ids = set()
-        if cfg['laptops'] and rows:
+        if cfg['gadgets'] and rows:
             blocked_ids = {r['student_id'] for r in conn.execute(
                 f"SELECT DISTINCT student_id FROM laptop_sessions "
                 f"WHERE status='Out' AND student_id IN ({marks})", ids).fetchall()}
@@ -1357,7 +1479,7 @@ def _register_remove(kind):
             conn.execute(f"UPDATE {table} SET is_active=0 WHERE id IN ({m2})", [r['id'] for r in go])
     if blocked_ids:
         names = ', '.join(r['full_name'] for r in rows if r['id'] in blocked_ids)
-        flash(f'Not removed (laptop still signed out — sign it in first): {names}.', 'warning')
+        flash(f'Not removed (gadget still signed out — sign it in first): {names}.', 'warning')
     if go:
         shown = ', '.join(f"{r['full_name']} ({r['class_name']})" for r in go[:5])
         more = f' and {len(go) - 5} more' if len(go) > 5 else ''
@@ -1370,9 +1492,13 @@ def _register_import(kind):
     """Step 1: read the uploaded PDF (or pasted list) and show a preview. Nothing is saved yet."""
     cfg = REGISTERS[kind]
     default_cls = clean_class_name(request.form.get('default_class'))
+    default_type = clean_gadget_type(request.form.get('gadget_type')) if cfg['gadgets'] else ''
     pasted = request.form.get('pasted') or ''
     upload = request.files.get('file')
     try:
+        if cfg['gadgets'] and not default_type:
+            raise ValueError('Choose the type of gadget for this list first: Laptop or Tablet '
+                             '(you can change it for individual students in the preview).')
         if upload and upload.filename:
             data = upload.read()
             fname = upload.filename
@@ -1417,7 +1543,8 @@ def _register_import(kind):
         r['idx'] = i
     return render_template('registry_import.html', cfg=cfg, kind=kind, rows=rows,
                            skipped=skipped[:40], skipped_total=len(skipped), counts=counts,
-                           source=source, truncated=truncated)
+                           source=source, truncated=truncated, default_type=default_type or 'Laptop',
+                           gadget_types=GADGET_TYPES)
 
 
 def _register_import_confirm(kind):
@@ -1429,6 +1556,7 @@ def _register_import_confirm(kind):
     except ValueError:
         count = 0
     keep = set(request.form.getlist('keep'))
+    default_type = clean_gadget_type(request.form.get('default_type')) or 'Laptop'
     wanted, no_class = [], 0
     for i in range(count):
         if str(i) not in keep:
@@ -1440,14 +1568,14 @@ def _register_import_confirm(kind):
         if not cls:
             no_class += 1
             continue
-        wanted.append((name, cls))
+        wanted.append((name, cls, clean_gadget_type(request.form.get(f'type_{i}')) or default_type))
 
     admin = current_admin()
     added = restored = already = 0
     with get_db() as conn:
         existing = _register_existing(conn, table)
         inserts, restores, seen = [], [], set()
-        for name, cls in wanted:
+        for name, cls, gtype in wanted:
             key = (name.lower(), cls.lower())
             if key in seen:
                 continue
@@ -1456,14 +1584,18 @@ def _register_import_confirm(kind):
                 if existing[key][1]:
                     already += 1
                 else:
-                    restores.append(existing[key][0])
-            elif kind == 'laptop':
+                    restores.append((existing[key][0], gtype))
+            elif kind == 'gadget':
                 inserts.append(("INSERT OR IGNORE INTO laptop_students (full_name, class_name, "
-                                "created_by) VALUES (?,?,?)", (name, cls, admin)))
+                                "gadget_type, created_by) VALUES (?,?,?,?)", (name, cls, gtype, admin)))
             else:
                 inserts.append(("INSERT OR IGNORE INTO students (full_name, class_name, "
                                 "created_by) VALUES (?,?,?)", (name, cls, admin)))
-        restore_stmts = [(f"UPDATE {table} SET is_active=1 WHERE id=?", (rid,)) for rid in restores]
+        if kind == 'gadget':
+            restore_stmts = [("UPDATE laptop_students SET is_active=1, gadget_type=? WHERE id=?", (gt, rid))
+                             for rid, gt in restores]
+        else:
+            restore_stmts = [(f"UPDATE {table} SET is_active=1 WHERE id=?", (rid,)) for rid, _ in restores]
         stmts = inserts + restore_stmts
         for i in range(0, len(stmts), IMPORT_BATCH):
             conn.run_batch(stmts[i:i + IMPORT_BATCH])
@@ -1483,6 +1615,300 @@ def _register_import_confirm(kind):
         parts.append(f'{no_class} skipped (no class)')
     flash('Import finished: ' + ', '.join(parts) + '.', 'success' if (added or restored) else 'info')
     return redirect(url_for(cfg['page']))
+
+
+# ─────────────────────────────────────────────
+# PROMOTING STUDENTS TO THE NEXT CLASS (both registers)
+#   • "Promote classes": one page lists every class with the class it moves to;
+#     the admin reviews it and presses ONE button to promote the whole school.
+#   • "Promote" on a single student, "Promote selected", or "Move selected to class".
+#   • Every change is recorded (class_changes) so the last one can be undone.
+# Students in the final class leave the register (kept in the database, not deleted).
+# ─────────────────────────────────────────────
+
+PROMOTE_CHUNK = 300
+
+
+def class_next_text(label, has_secondary=True):
+    """'P.6' / 'leave' / '' (not recognised) — used by the register page buttons."""
+    r = next_class(label, has_secondary)
+    if r is None:
+        return ''
+    return 'leave' if r.get('leave') else r['label']
+
+
+app.jinja_env.globals['class_next_text'] = class_next_text
+
+
+def _school_has_secondary(conn):
+    rows = conn.execute(
+        "SELECT class_name FROM students WHERE is_active=1 "
+        "UNION SELECT class_name FROM laptop_students WHERE is_active=1").fetchall()
+    return school_has_secondary([r['class_name'] or '' for r in rows])
+
+
+def _apply_class_moves(conn, kind, moves, admin, log=True):
+    """Move / graduate students safely.
+
+    moves: [{'id', 'name', 'old', 'new', 'leave'}]  (new = target class; leave = graduate)
+    The register will not allow two students with the same name in the same class, so a
+    move is only made when its target is free; moves that free up a spot are done first
+    (in "waves"). Anything that cannot be done safely is skipped and reported — never forced.
+    Returns {'moved', 'left', 'skipped': [(name, reason)], 'groups': {(old, new): n}, 'batch'}.
+    """
+    table = REGISTERS[kind]['table']
+    skipped, groups = [], {}
+    leaves = [m for m in moves if m.get('leave')]
+    movers = [m for m in moves if not m.get('leave') and m.get('new')
+              and m['new'].lower() != (m['old'] or '').lower()]
+
+    if kind == 'gadget' and leaves:                     # a gadget that is out cannot leave the school
+        marks = ','.join('?' * len(leaves))
+        out = {r['student_id'] for r in conn.execute(
+            f"SELECT DISTINCT student_id FROM laptop_sessions WHERE status='Out' "
+            f"AND student_id IN ({marks})", [m['id'] for m in leaves]).fetchall()}
+        for m in leaves:
+            if m['id'] in out:
+                skipped.append((m['name'], 'gadget is still signed out — sign it in first'))
+        leaves = [m for m in leaves if m['id'] not in out]
+
+    occupied = set(_register_existing(conn, table))
+    waves, pending = [], movers
+    while pending:
+        wave, rest, claimed = [], [], set()
+        for m in pending:
+            key = (m['name'].lower(), m['new'].lower())
+            if key in occupied or key in claimed:
+                rest.append(m)
+            else:
+                wave.append(m)
+                claimed.add(key)
+        if not wave:
+            break
+        for m in wave:
+            occupied.discard((m['name'].lower(), (m['old'] or '').lower()))
+            occupied.add((m['name'].lower(), m['new'].lower()))
+        waves.append(wave)
+        pending = rest
+    for m in pending:
+        skipped.append((m['name'], f"a student with the same name is already in {m['new']} "
+                                   f"(move them again after that student has moved)"))
+
+    batch = secrets.token_hex(5)
+    if log:                                             # record first, so a partial failure can still be undone
+        now = datetime.utcnow().isoformat()
+        rows = [(m['id'], m['name'], m['old'], m['new'], 1) for w in waves for m in w]
+        rows += [(m['id'], m['name'], m['old'], m['old'], 0) for m in leaves]
+        stmts = [("INSERT INTO class_changes (register, batch, student_id, student_name, old_class, "
+                  "new_class, new_active, changed_by, changed_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                  (kind, batch, sid, nm, old, new, act, admin, now)) for sid, nm, old, new, act in rows]
+        for i in range(0, len(stmts), IMPORT_BATCH):
+            conn.run_batch(stmts[i:i + IMPORT_BATCH])
+
+    for wave in waves:
+        by_target = {}
+        for m in wave:
+            by_target.setdefault(m['new'], []).append(m['id'])
+            groups[(m['old'], m['new'])] = groups.get((m['old'], m['new']), 0) + 1
+        stmts = []
+        for target, ids in by_target.items():
+            for i in range(0, len(ids), PROMOTE_CHUNK):
+                part = ids[i:i + PROMOTE_CHUNK]
+                stmts.append((f"UPDATE {table} SET class_name=? WHERE id IN ({','.join('?' * len(part))})",
+                              (target, *part)))
+        for i in range(0, len(stmts), IMPORT_BATCH):
+            conn.run_batch(stmts[i:i + IMPORT_BATCH])
+    if leaves:
+        ids = [m['id'] for m in leaves]
+        stmts = [(f"UPDATE {table} SET is_active=0 WHERE id IN ({','.join('?' * len(ids[i:i + PROMOTE_CHUNK]))})",
+                  tuple(ids[i:i + PROMOTE_CHUNK])) for i in range(0, len(ids), PROMOTE_CHUNK)]
+        conn.run_batch(stmts)
+        for m in leaves:
+            groups[(m['old'], None)] = groups.get((m['old'], None), 0) + 1
+    return {'moved': sum(len(w) for w in waves), 'left': len(leaves), 'skipped': skipped,
+            'groups': groups, 'batch': batch}
+
+
+def _describe_groups(groups):
+    parts = [f"{old} → {new if new else 'left school'} ({n})"
+             for (old, new), n in sorted(groups.items(), key=lambda kv: _natural_key(kv[0][0] or ''))]
+    text = ', '.join(parts[:8])
+    return text + (f' … and {len(parts) - 8} more groups' if len(parts) > 8 else '')
+
+
+def _flash_class_result(res, verb='Promoted'):
+    if res['moved'] or res['left']:
+        bits = []
+        if res['moved']:
+            bits.append(f"{res['moved']} student{'s' if res['moved'] != 1 else ''} {verb.lower()}")
+        if res['left']:
+            bits.append(f"{res['left']} left the school")
+        flash(' · '.join(bits) + '.  You can undo this from the Promote page.', 'success')
+    if res['skipped']:
+        names = '; '.join(f'{n}: {why}' for n, why in res['skipped'][:6])
+        more = f' …and {len(res["skipped"]) - 6} more' if len(res['skipped']) > 6 else ''
+        flash(f"Skipped {len(res['skipped'])} — {names}{more}.", 'warning')
+    if not (res['moved'] or res['left'] or res['skipped']):
+        flash('Nothing to change.', 'info')
+
+
+def _last_class_change(conn, kind):
+    last = conn.execute("SELECT batch FROM class_changes WHERE register=? AND undone=0 "
+                        "ORDER BY id DESC LIMIT 1", (kind,)).fetchone()
+    if not last:
+        return None
+    info = conn.execute(
+        "SELECT COUNT(*) AS n, MIN(changed_by) AS who, MIN(changed_at) AS at, "
+        "SUM(CASE WHEN new_active=0 THEN 1 ELSE 0 END) AS gone "
+        "FROM class_changes WHERE register=? AND batch=? AND undone=0",
+        (kind, last['batch'])).fetchone()
+    return {'batch': last['batch'], 'n': info['n'], 'who': info['who'] or 'an admin',
+            'at': info['at'], 'gone': info['gone'] or 0}
+
+
+def _promote_page(kind):
+    cfg = REGISTERS[kind]
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT class_name, COUNT(*) AS c FROM {cfg['table']} WHERE is_active=1 "
+            f"GROUP BY class_name").fetchall()
+        has_sec = _school_has_secondary(conn)
+        last = _last_class_change(conn, kind)
+    plans = []
+    for r in sorted(rows, key=lambda r: _natural_key(r['class_name'] or '')):
+        label = r['class_name'] or ''
+        nxt = next_class(label, has_sec) if label else None
+        if nxt is None:
+            action, target, note = 'keep', '', 'Not recognised — choose where they go, or leave them.'
+        elif nxt.get('leave'):
+            action, target, note = 'leave', '', 'Final class — leaves the school.'
+        else:
+            action, target, note = 'promote', nxt['label'], ''
+        plans.append({'old': label, 'count': r['c'], 'action': action, 'target': target, 'note': note})
+    return render_template('promote.html', cfg=cfg, kind=kind, plans=plans, last=last,
+                           total=sum(p['count'] for p in plans))
+
+
+def _promote_apply(kind):
+    cfg = REGISTERS[kind]
+    try:
+        count = min(int(request.form.get('count', 0)), 300)
+    except ValueError:
+        count = 0
+    plan = {}
+    for i in range(count):
+        old = (request.form.get(f'old_{i}') or '').strip()
+        action = request.form.get(f'action_{i}', 'keep')
+        target = clean_class_name(request.form.get(f'target_{i}'))
+        if action == 'promote' and target:
+            plan[old.lower()] = ('promote', target)
+        elif action == 'leave':
+            plan[old.lower()] = ('leave', '')
+    if not plan:
+        flash('Nothing was selected to promote.', 'info')
+        return redirect(url_for(cfg['promote']))
+    admin = current_admin()
+    with get_db() as conn:
+        rows = conn.execute(f"SELECT id, full_name, class_name FROM {cfg['table']} "
+                            f"WHERE is_active=1").fetchall()
+        moves = []
+        for r in rows:                                   # decided from each student's CURRENT class,
+            act = plan.get((r['class_name'] or '').lower())    # so P.5->P.6 and P.6->P.7 never double-promote
+            if act:
+                moves.append({'id': r['id'], 'name': r['full_name'], 'old': r['class_name'] or '',
+                              'new': act[1] or None, 'leave': act[0] == 'leave'})
+        res = _apply_class_moves(conn, kind, moves, admin)
+    if res['moved'] or res['left']:
+        log_activity('class_promote', f"Promoted {cfg['title']}: {_describe_groups(res['groups'])}")
+    _flash_class_result(res)
+    return redirect(url_for(cfg['page']))
+
+
+def _register_move(kind):
+    """Promote / move ONE student, the ticked students, or move them to a chosen class."""
+    cfg = REGISTERS[kind]
+    only = request.form.get('only')
+    raw = [only] if only else request.form.getlist('ids')
+    ids = [int(i) for i in raw if str(i).isdigit()][:500]
+    back = redirect(url_for(cfg['page'], q=request.form.get('q', ''), cls=request.form.get('cls', '')))
+    if not ids:
+        flash('Tick at least one student first.', 'warning')
+        return back
+    mode = 'to' if request.form.get('do') == 'to' else 'next'
+    target = clean_class_name(request.form.get('target'))
+    if mode == 'to' and not target:
+        flash('Type the class to move them to, for example P.6.', 'danger')
+        return back
+    admin = current_admin()
+    marks = ','.join('?' * len(ids))
+    with get_db() as conn:
+        rows = conn.execute(f"SELECT id, full_name, class_name FROM {cfg['table']} "
+                            f"WHERE is_active=1 AND id IN ({marks})", ids).fetchall()
+        has_sec = _school_has_secondary(conn)
+        moves, unknown = [], []
+        for r in rows:
+            old = r['class_name'] or ''
+            if mode == 'to':
+                moves.append({'id': r['id'], 'name': r['full_name'], 'old': old, 'new': target})
+                continue
+            nxt = next_class(old, has_sec)
+            if nxt is None:
+                unknown.append((r['full_name'], f"next class of '{old or 'no class'}' is not known — use “Move to class”"))
+            elif nxt.get('leave'):
+                moves.append({'id': r['id'], 'name': r['full_name'], 'old': old, 'new': None, 'leave': True})
+            else:
+                moves.append({'id': r['id'], 'name': r['full_name'], 'old': old, 'new': nxt['label']})
+        res = _apply_class_moves(conn, kind, moves, admin)
+    res['skipped'] = unknown + res['skipped']
+    if res['moved'] or res['left']:
+        log_activity('class_promote', f"{'Moved' if mode == 'to' else 'Promoted'} in {cfg['title']}: "
+                                      f"{_describe_groups(res['groups'])}")
+    _flash_class_result(res, 'moved' if mode == 'to' else 'promoted')
+    return back
+
+
+def _register_undo(kind):
+    cfg = REGISTERS[kind]
+    table = cfg['table']
+    admin = current_admin()
+    with get_db() as conn:
+        last = _last_class_change(conn, kind)
+        if not last or request.form.get('batch') != last['batch']:
+            flash('There is nothing to undo (it may already have been undone).', 'info')
+            return redirect(url_for(cfg['promote']))
+        changes = conn.execute("SELECT * FROM class_changes WHERE register=? AND batch=? AND undone=0",
+                               (kind, last['batch'])).fetchall()
+        marks = ','.join('?' * len(changes))
+        now_rows = {r['id']: r for r in conn.execute(
+            f"SELECT id, full_name, class_name, is_active FROM {table} WHERE id IN ({marks})",
+            [c['student_id'] for c in changes]).fetchall()}
+        back_moves, reactivate, skipped = [], [], []
+        for c in changes:
+            cur = now_rows.get(c['student_id'])
+            name = c['student_name'] or 'student'
+            if not cur:
+                skipped.append((name, 'no longer in the register'))
+            elif (bool(cur['is_active']) != bool(c['new_active'])
+                  or (cur['class_name'] or '').lower() != (c['new_class'] or '').lower()):
+                skipped.append((name, 'was changed again since, so left as it is'))
+            elif not c['new_active']:
+                reactivate.append(c['student_id'])
+            else:
+                back_moves.append({'id': c['student_id'], 'name': cur['full_name'],
+                                   'old': cur['class_name'] or '', 'new': c['old_class']})
+        res = _apply_class_moves(conn, kind, back_moves, admin, log=False)
+        for i in range(0, len(reactivate), PROMOTE_CHUNK):
+            part = reactivate[i:i + PROMOTE_CHUNK]
+            conn.execute(f"UPDATE {table} SET is_active=1 WHERE id IN ({','.join('?' * len(part))})", part)
+        conn.execute("UPDATE class_changes SET undone=1 WHERE register=? AND batch=?", (kind, last['batch']))
+    res['skipped'] = skipped + res['skipped']
+    restored = res['moved'] + len(reactivate)
+    log_activity('class_undo', f"Undid the last class change in {cfg['title']} ({restored} student"
+                               f"{'s' if restored != 1 else ''} restored)")
+    flash(f"Undone — {restored} student{'s' if restored != 1 else ''} put back where they were.", 'success')
+    if res['skipped']:
+        flash('Not restored: ' + '; '.join(f'{n} ({w})' for n, w in res['skipped'][:6]) + '.', 'warning')
+    return redirect(url_for(cfg['promote']))
 
 
 # — school students (tablet sign-out search) —
@@ -1516,35 +1942,93 @@ def students_import_confirm():
     return _register_import_confirm('students')
 
 
-# — students with personal laptops —
-@app.route('/laptops/students')
+# — students with personal gadgets —
+@app.route('/gadgets/students')
 @login_required
-def laptop_students_register():
-    return _register_page('laptop')
+def gadget_students_register():
+    return _register_page('gadget')
 
 
-@app.route('/laptops/students/add', methods=['POST'])
+@app.route('/gadgets/students/add', methods=['POST'])
 @login_required
-def laptop_students_add():
-    return _register_add('laptop')
+def gadget_students_add():
+    return _register_add('gadget')
 
 
-@app.route('/laptops/students/remove', methods=['POST'])
+@app.route('/gadgets/students/remove', methods=['POST'])
 @login_required
-def laptop_students_remove():
-    return _register_remove('laptop')
+def gadget_students_remove():
+    return _register_remove('gadget')
 
 
-@app.route('/laptops/students/import', methods=['POST'])
+@app.route('/gadgets/students/import', methods=['POST'])
 @login_required
-def laptop_students_import():
-    return _register_import('laptop')
+def gadget_students_import():
+    return _register_import('gadget')
 
 
-@app.route('/laptops/students/import/confirm', methods=['POST'])
+@app.route('/gadgets/students/import/confirm', methods=['POST'])
 @login_required
-def laptop_students_import_confirm():
-    return _register_import_confirm('laptop')
+def gadget_students_import_confirm():
+    return _register_import_confirm('gadget')
+
+
+@app.route('/students/promote')
+@login_required
+def students_promote():
+    return _promote_page('students')
+
+
+@app.route('/students/promote/apply', methods=['POST'])
+@login_required
+def students_promote_apply():
+    return _promote_apply('students')
+
+
+@app.route('/students/promote/undo', methods=['POST'])
+@login_required
+def students_promote_undo():
+    return _register_undo('students')
+
+
+@app.route('/students/move', methods=['POST'])
+@login_required
+def students_move():
+    return _register_move('students')
+
+
+@app.route('/gadgets/students/promote')
+@login_required
+def gadget_students_promote():
+    return _promote_page('gadget')
+
+
+@app.route('/gadgets/students/promote/apply', methods=['POST'])
+@login_required
+def gadget_students_promote_apply():
+    return _promote_apply('gadget')
+
+
+@app.route('/gadgets/students/promote/undo', methods=['POST'])
+@login_required
+def gadget_students_promote_undo():
+    return _register_undo('gadget')
+
+
+@app.route('/gadgets/students/move', methods=['POST'])
+@login_required
+def gadget_students_move():
+    return _register_move('gadget')
+
+
+@app.route('/laptops', defaults={'rest': ''}, methods=['GET', 'POST'])
+@app.route('/laptops/<path:rest>', methods=['GET', 'POST'])
+def _old_laptop_address(rest):
+    """These pages used to live under /laptops (now /gadgets): keep old bookmarks working."""
+    target = '/gadgets' + ('/' + rest if rest else '')
+    if request.query_string:
+        target += '?' + request.query_string.decode('utf-8', 'ignore')
+    return redirect(target, code=308)
 
 
 @app.errorhandler(413)
@@ -1554,23 +2038,23 @@ def _file_too_large(_e):
 
 
 # ─────────────────────────────────────────────
-# PERSONAL LAPTOPS
-# Students may take their laptop out ONLY during their timetable. Even an admin
-# cannot sign one out at any other time (see check_laptop_access above).
+# PERSONAL GADGETS
+# Students may take their gadget out ONLY during their timetable. Even an admin
+# cannot sign one out at any other time (see check_gadget_access above).
 # ─────────────────────────────────────────────
 
-def _laptop_slots(conn, student_id):
+def _gadget_slots(conn, student_id):
     return conn.execute(
         "SELECT * FROM laptop_slots WHERE student_id=? ORDER BY weekday, start_time",
         (student_id,)).fetchall()
 
 
-def _laptop_student(conn, student_id):
+def _gadget_student(conn, student_id):
     return conn.execute(
         "SELECT * FROM laptop_students WHERE id=? AND is_active=1", (student_id,)).fetchone()
 
 
-def _laptop_is_out(conn, student_id):
+def _gadget_is_out(conn, student_id):
     return conn.execute(
         "SELECT id FROM laptop_sessions WHERE student_id=? AND status='Out'",
         (student_id,)).fetchone() is not None
@@ -1582,18 +2066,28 @@ def _reset_consent(conn, student_id):
                  (student_id,))
 
 
-def _laptop_device(row):
-    bits = [row['laptop_model'] or '', row['serial_no'] or '']
-    return ' · S/N '.join(b for b in bits if b) if all(bits) else (bits[0] or (f"S/N {bits[1]}" if bits[1] else '—'))
+def _gadget_type(row):
+    try:
+        return row['gadget_type'] or 'Laptop'
+    except (KeyError, IndexError):
+        return 'Laptop'
 
 
-def _laptop_session_payload(r):
+def _gadget_device(row):
+    """'Laptop · HP ProBook 450 · S/N 123' (type first, details only if known)."""
+    parts = [_gadget_type(row), (row['laptop_model'] or '').strip()]
+    if (row['serial_no'] or '').strip():
+        parts.append('S/N ' + row['serial_no'].strip())
+    return ' · '.join(p for p in parts if p)
+
+
+def _gadget_session_payload(r):
     return {
         'id': r['id'],
         'student_id': r['student_id'],
         'student': r['full_name'],
         'class': r['class_name'] or '',
-        'laptop': _laptop_device(r),
+        'gadget': _gadget_device(r),
         'slot': (f"{fmt12(r['slot_start'])} – {fmt12(r['slot_end'])}"
                  if r['slot_start'] and r['slot_end'] else '—'),
         'out': fmt_dt(r['sign_out_time']),
@@ -1603,27 +2097,27 @@ def _laptop_session_payload(r):
     }
 
 
-_LAPTOP_SESSION_SELECT = """
-    SELECT se.*, t.full_name, t.class_name, t.laptop_model, t.serial_no
+_GADGET_SESSION_SELECT = """
+    SELECT se.*, t.full_name, t.class_name, t.laptop_model, t.serial_no, t.gadget_type
     FROM laptop_sessions se JOIN laptop_students t ON t.id = se.student_id
 """
 
 
-def _laptop_overdue_rows(conn):
+def _gadget_overdue_rows(conn):
     now = datetime.utcnow().isoformat()
     return conn.execute(
-        _LAPTOP_SESSION_SELECT +
+        _GADGET_SESSION_SELECT +
         " WHERE se.status='Out' AND se.expected_return_time < ? "
         "ORDER BY se.expected_return_time", (now,)).fetchall()
 
 
-def _laptop_overdue_payload(rows):
-    return [_laptop_session_payload(r) for r in rows]
+def _gadget_overdue_payload(rows):
+    return [_gadget_session_payload(r) for r in rows]
 
 
-@app.route('/laptops')
+@app.route('/gadgets')
 @login_required
-def laptop_desk():
+def gadget_desk():
     now_local = local_now()
     now_utc = datetime.utcnow().isoformat()
     with get_db() as conn:
@@ -1634,10 +2128,10 @@ def laptop_desk():
             "SELECT sl.* FROM laptop_slots sl JOIN laptop_students t ON t.id = sl.student_id "
             "WHERE t.is_active=1 ORDER BY sl.weekday, sl.start_time").fetchall()
         out_rows = conn.execute(
-            _LAPTOP_SESSION_SELECT + " WHERE se.status='Out' ORDER BY se.expected_return_time"
+            _GADGET_SESSION_SELECT + " WHERE se.status='Out' ORDER BY se.expected_return_time"
         ).fetchall()
         recent = conn.execute(
-            _LAPTOP_SESSION_SELECT + " WHERE se.status='Returned' "
+            _GADGET_SESSION_SELECT + " WHERE se.status='Returned' "
             "ORDER BY se.sign_back_time DESC LIMIT 10").fetchall()
 
     slots_by = {}
@@ -1648,11 +2142,12 @@ def laptop_desk():
     people, allowed_now = [], []
     for st in students:
         slots = slots_by.get(st['id'], [])
-        verdict = check_laptop_access(st['full_name'], slots, bool(st['consent_at']),
+        verdict = check_gadget_access(st['full_name'], slots, bool(st['consent_at']),
                                       st['id'] in out_ids, now_local)
         people.append({
             'id': st['id'], 'n': st['full_name'], 'c': st['class_name'] or '',
-            'laptop': _laptop_device(st), 'consent': bool(st['consent_at']),
+            'gadget': _gadget_device(st), 'type': _gadget_type(st),
+            'consent': bool(st['consent_at']),
             'out': st['id'] in out_ids,
             'slots': [[int(s['weekday']), s['start_time'], s['end_time']] for s in slots],
         })
@@ -1660,7 +2155,7 @@ def laptop_desk():
             allowed_now.append({'id': st['id'], 'n': st['full_name'], 'c': st['class_name'] or '',
                                 'until': fmt12(verdict['slot']['end_time'])})
 
-    out_payload = _laptop_session_payload
+    out_payload = _gadget_session_payload
     out_list = [dict(out_payload(r), overdue=(r['expected_return_time'] < now_utc)) for r in out_rows]
     recent_list = []
     for r in recent:
@@ -1673,30 +2168,30 @@ def laptop_desk():
 
     pre = request.args.get('student', '')
     return render_template(
-        'laptop_desk.html', people=people, out_list=out_list, recent=recent_list,
+        'gadget_desk.html', people=people, out_list=out_list, recent=recent_list,
         allowed_now=allowed_now, overdue_n=sum(1 for o in out_list if o['overdue']),
         preselect=int(pre) if pre.isdigit() else None, admin=current_admin(),
         server_now_ms=int(_time.time() * 1000), tz_name=APP_TZ_NAME)
 
 
-@app.route('/laptops/signout', methods=['POST'])
+@app.route('/gadgets/signout', methods=['POST'])
 @login_required
-def laptop_signout():
+def gadget_signout():
     admin = current_admin()
     sid = request.form.get('student_id', '')
-    back = redirect(url_for('laptop_desk', student=sid if sid.isdigit() else None))
+    back = redirect(url_for('gadget_desk', student=sid if sid.isdigit() else None))
     if not sid.isdigit():
         flash('Choose a student first.', 'danger')
         return back
     now_local = local_now()
     with get_db() as conn:
-        st = _laptop_student(conn, int(sid))
+        st = _gadget_student(conn, int(sid))
         if not st:
-            flash('That student is not in the laptop register.', 'danger')
-            return redirect(url_for('laptop_desk'))
-        verdict = check_laptop_access(
-            st['full_name'], _laptop_slots(conn, st['id']), bool(st['consent_at']),
-            _laptop_is_out(conn, st['id']), now_local)
+            flash('That student is not in the gadget register.', 'danger')
+            return redirect(url_for('gadget_desk'))
+        verdict = check_gadget_access(
+            st['full_name'], _gadget_slots(conn, st['id']), bool(st['consent_at']),
+            _gadget_is_out(conn, st['id']), now_local)
         if not verdict['ok']:
             log_activity('laptop_blocked',
                          f"Blocked: {st['full_name']} ({st['class_name']}) — {verdict['message']}")
@@ -1714,86 +2209,87 @@ def laptop_signout():
         """, (st['id'], slot['start_time'], slot['end_time'], to_utc_iso(now_local),
               to_utc_iso(due_local), admin, st['id']))
         if not res.rowcount:
-            flash(f"{st['full_name']} already has a laptop signed out.", 'info')
+            flash(f"{st['full_name']} already has a gadget signed out.", 'info')
             return back
     due = fmt12(slot['end_time'])
-    log_activity('laptop_signout', f"Signed out laptop to {st['full_name']} ({st['class_name']}), "
-                                   f"due back at {due}")
-    flash(f"Laptop signed out to {st['full_name']}. Slot {slot_title(slot)} — due back by {due}. "
+    log_activity('laptop_signout', f"Signed out {_gadget_type(st).lower()} to {st['full_name']} "
+                                   f"({st['class_name']}), due back at {due}")
+    flash(f"{_gadget_type(st)} signed out to {st['full_name']}. Slot {slot_title(slot)} — due back by {due}. "
           f"Approved by {admin}.", 'success')
-    return redirect(url_for('laptop_desk'))
+    return redirect(url_for('gadget_desk'))
 
 
-@app.route('/laptops/return/<int:session_id>', methods=['POST'])
+@app.route('/gadgets/return/<int:session_id>', methods=['POST'])
 @login_required
-def laptop_return(session_id):
+def gadget_return(session_id):
     admin = current_admin()
-    back = redirect(url_for('laptop_overdue_page') if request.form.get('next') == 'overdue'
-                    else url_for('laptop_desk'))
+    back = redirect(url_for('gadget_overdue_page') if request.form.get('next') == 'overdue'
+                    else url_for('gadget_desk'))
     now = datetime.utcnow().isoformat()
     with get_db() as conn:
         se = conn.execute(
-            "SELECT se.status, se.expected_return_time, t.full_name, t.class_name "
+            "SELECT se.status, se.expected_return_time, t.full_name, t.class_name, t.gadget_type "
             "FROM laptop_sessions se JOIN laptop_students t ON t.id = se.student_id "
             "WHERE se.id=?", (session_id,)).fetchone()
         if not se:
-            flash('Laptop session not found.', 'danger')
+            flash('Gadget session not found.', 'danger')
             return back
         if se['status'] != 'Out':
-            flash(f"{se['full_name']}'s laptop was already signed in.", 'info')
+            flash(f"{se['full_name']}'s {_gadget_type(se).lower()} was already signed in.", 'info')
             return back
         conn.execute("UPDATE laptop_sessions SET status='Returned', sign_back_time=?, "
                      "signed_back_by=? WHERE id=? AND status='Out'", (now, admin, session_id))
     late_min = int((datetime.fromisoformat(now) -
                     datetime.fromisoformat(se['expected_return_time'])).total_seconds() // 60)
     note = 'on time' if late_min <= 0 else f'{late_min} min late'
-    log_activity('laptop_return', f"Signed in laptop from {se['full_name']} ({se['class_name']}) — {note}")
-    flash(f"{se['full_name']}'s laptop signed in by {admin} ({note}).",
+    log_activity('laptop_return', f"Signed in {_gadget_type(se).lower()} from {se['full_name']} "
+                                  f"({se['class_name']}) — {note}")
+    flash(f"{se['full_name']}'s {_gadget_type(se).lower()} signed in by {admin} ({note}).",
           'success' if late_min <= 0 else 'warning')
     return back
 
 
-@app.route('/laptops/overdue')
+@app.route('/gadgets/overdue')
 @login_required
-def laptop_overdue_page():
+def gadget_overdue_page():
     with get_db() as conn:
-        rows = _laptop_overdue_rows(conn)
-    return render_template('laptop_overdue.html', overdue=_laptop_overdue_payload(rows),
+        rows = _gadget_overdue_rows(conn)
+    return render_template('gadget_overdue.html', overdue=_gadget_overdue_payload(rows),
                            server_now_ms=int(_time.time() * 1000))
 
 
 # — timetable editor (admin-created, with the student's consent) —
 
 def _timetable_back(sid):
-    return redirect(url_for('laptop_timetable', sid=sid))
+    return redirect(url_for('gadget_timetable', sid=sid))
 
 
-@app.route('/laptops/students/<int:sid>/timetable')
+@app.route('/gadgets/students/<int:sid>/timetable')
 @login_required
-def laptop_timetable(sid):
+def gadget_timetable(sid):
     now_local = local_now()
     with get_db() as conn:
-        st = _laptop_student(conn, sid)
+        st = _gadget_student(conn, sid)
         if not st:
             flash('Student not found.', 'danger')
-            return redirect(url_for('laptop_students_register'))
-        slots = _laptop_slots(conn, sid)
-        is_out = _laptop_is_out(conn, sid)
+            return redirect(url_for('gadget_students_register'))
+        slots = _gadget_slots(conn, sid)
+        is_out = _gadget_is_out(conn, sid)
         pdf = _timetable_pdf_info(conn, sid)
-    verdict = check_laptop_access(st['full_name'], slots, bool(st['consent_at']), is_out, now_local)
+    verdict = check_gadget_access(st['full_name'], slots, bool(st['consent_at']), is_out, now_local)
     days = [[] for _ in range(7)]
     total_min = 0
     for s in slots:
         days[int(s['weekday'])].append(s)
         total_min += hhmm_to_min(s['end_time']) - hhmm_to_min(s['start_time'])
-    return render_template('laptop_timetable.html', st=st, slots=slots, days=days, verdict=verdict,
+    return render_template('gadget_timetable.html', st=st, slots=slots, days=days, verdict=verdict,
                            total_hours=round(total_min / 60, 1), today_wd=now_local.weekday(),
                            consent_at=st['consent_at'], is_out=is_out, pdf=pdf)
 
 
-@app.route('/laptops/students/<int:sid>/timetable/add', methods=['POST'])
+@app.route('/gadgets/students/<int:sid>/timetable/add', methods=['POST'])
 @login_required
-def laptop_timetable_add(sid):
+def gadget_timetable_add(sid):
     days = sorted({d for d in request.form.getlist('days') if d.isdigit()})
     start = (request.form.get('start') or '').strip()
     end = (request.form.get('end') or '').strip()
@@ -1802,11 +2298,11 @@ def laptop_timetable_add(sid):
         flash('Tick at least one day.', 'danger')
         return _timetable_back(sid)
     with get_db() as conn:
-        st = _laptop_student(conn, sid)
+        st = _gadget_student(conn, sid)
         if not st:
             flash('Student not found.', 'danger')
-            return redirect(url_for('laptop_students_register'))
-        existing = list(_laptop_slots(conn, sid))
+            return redirect(url_for('gadget_students_register'))
+        existing = list(_gadget_slots(conn, sid))
         planned, errors = [], []
         for d in days:
             err, a, b = validate_slot(d, start, end, existing + planned)
@@ -1830,16 +2326,16 @@ def laptop_timetable_add(sid):
                                    f"{' ' + label if label else ''} ({names}) to "
                                    f"{st['full_name']}'s timetable")
     flash(f'Added {fmt12(start)} – {fmt12(end)} on {names}. Record the student\'s consent '
-          f'again before laptops can be signed out.', 'success')
+          f'again before gadgets can be signed out.', 'success')
     return _timetable_back(sid)
 
 
-@app.route('/laptops/students/<int:sid>/timetable/slot/<int:slot_id>', methods=['POST'])
+@app.route('/gadgets/students/<int:sid>/timetable/slot/<int:slot_id>', methods=['POST'])
 @login_required
-def laptop_timetable_edit(sid, slot_id):
+def gadget_timetable_edit(sid, slot_id):
     with get_db() as conn:
-        st = _laptop_student(conn, sid)
-        slots = list(_laptop_slots(conn, sid))
+        st = _gadget_student(conn, sid)
+        slots = list(_gadget_slots(conn, sid))
         mine = next((s for s in slots if s['id'] == slot_id), None)
         if not st or not mine:
             flash('Slot not found.', 'danger')
@@ -1858,17 +2354,17 @@ def laptop_timetable_edit(sid, slot_id):
     log_activity('timetable_edit',
                  f"Changed {st['full_name']}'s slot {WD_SHORT[int(mine['weekday'])]} "
                  f"{slot_label(mine)} → {WD_SHORT[int(wd)]} {fmt12(start)} – {fmt12(end)}")
-    flash('Slot updated. Record the student\'s consent again before laptops can be signed out.',
+    flash('Slot updated. Record the student\'s consent again before gadgets can be signed out.',
           'success')
     return _timetable_back(sid)
 
 
-@app.route('/laptops/students/<int:sid>/timetable/slot/<int:slot_id>/delete', methods=['POST'])
+@app.route('/gadgets/students/<int:sid>/timetable/slot/<int:slot_id>/delete', methods=['POST'])
 @login_required
-def laptop_timetable_delete(sid, slot_id):
+def gadget_timetable_delete(sid, slot_id):
     with get_db() as conn:
-        st = _laptop_student(conn, sid)
-        mine = next((s for s in _laptop_slots(conn, sid) if s['id'] == slot_id), None)
+        st = _gadget_student(conn, sid)
+        mine = next((s for s in _gadget_slots(conn, sid) if s['id'] == slot_id), None)
         if not st or not mine:
             flash('Slot not found.', 'danger')
             return _timetable_back(sid)
@@ -1876,21 +2372,21 @@ def laptop_timetable_delete(sid, slot_id):
         _reset_consent(conn, sid)
     log_activity('timetable_edit', f"Removed {WD_SHORT[int(mine['weekday'])]} {slot_label(mine)} "
                                    f"from {st['full_name']}'s timetable")
-    flash('Slot removed. Record the student\'s consent again before laptops can be signed out.',
+    flash('Slot removed. Record the student\'s consent again before gadgets can be signed out.',
           'success')
     return _timetable_back(sid)
 
 
-@app.route('/laptops/students/<int:sid>/timetable/consent', methods=['POST'])
+@app.route('/gadgets/students/<int:sid>/timetable/consent', methods=['POST'])
 @login_required
-def laptop_timetable_consent(sid):
+def gadget_timetable_consent(sid):
     admin = current_admin()
     with get_db() as conn:
-        st = _laptop_student(conn, sid)
+        st = _gadget_student(conn, sid)
         if not st:
             flash('Student not found.', 'danger')
-            return redirect(url_for('laptop_students_register'))
-        if not _laptop_slots(conn, sid):
+            return redirect(url_for('gadget_students_register'))
+        if not _gadget_slots(conn, sid):
             flash('Add at least one slot before recording consent.', 'danger')
             return _timetable_back(sid)
         if 'agree' not in request.form:
@@ -1898,27 +2394,31 @@ def laptop_timetable_consent(sid):
             return _timetable_back(sid)
         conn.execute("UPDATE laptop_students SET consent_by=?, consent_at=? WHERE id=?",
                      (admin, datetime.utcnow().isoformat(), sid))
-    log_activity('timetable_consent', f"Recorded {st['full_name']}'s agreement to their laptop timetable")
-    flash(f"Consent recorded for {st['full_name']}. Their laptop can now be signed out during the slots.",
+    log_activity('timetable_consent', f"Recorded {st['full_name']}'s agreement to their gadget timetable")
+    flash(f"Consent recorded for {st['full_name']}. Their gadget can now be signed out during the slots.",
           'success')
     return _timetable_back(sid)
 
 
-@app.route('/laptops/students/<int:sid>/edit', methods=['POST'])
+@app.route('/gadgets/students/<int:sid>/edit', methods=['POST'])
 @login_required
-def laptop_student_edit(sid):
+def gadget_student_edit(sid):
     name = clean_person_name(request.form.get('name'))
     cls = clean_class_name(request.form.get('cls'))
     model = (request.form.get('laptop_model') or '').strip()[:60]
     serial = (request.form.get('serial_no') or '').strip()[:40]
+    gtype = clean_gadget_type(request.form.get('gadget_type'))
     if len(name) < 3 or not cls:
         flash('Enter the full name and the class.', 'danger')
         return _timetable_back(sid)
+    if not gtype:
+        flash('Choose the type of gadget: Laptop or Tablet.', 'danger')
+        return _timetable_back(sid)
     with get_db() as conn:
-        st = _laptop_student(conn, sid)
+        st = _gadget_student(conn, sid)
         if not st:
             flash('Student not found.', 'danger')
-            return redirect(url_for('laptop_students_register'))
+            return redirect(url_for('gadget_students_register'))
         clash = conn.execute(
             "SELECT id FROM laptop_students WHERE full_name = ? COLLATE NOCASE "
             "AND class_name = ? COLLATE NOCASE AND id <> ?", (name, cls, sid)).fetchone()
@@ -1926,8 +2426,8 @@ def laptop_student_edit(sid):
             flash('Another student with that name and class is already registered.', 'danger')
             return _timetable_back(sid)
         conn.execute("UPDATE laptop_students SET full_name=?, class_name=?, laptop_model=?, "
-                     "serial_no=? WHERE id=?", (name, cls, model, serial, sid))
-    log_activity('laptop_student_edit', f'Updated details of {name} ({cls})')
+                     "serial_no=?, gadget_type=? WHERE id=?", (name, cls, model, serial, gtype, sid))
+    log_activity('laptop_student_edit', f'Updated details of {name} ({cls}) — {gtype}')
     flash('Details saved.', 'success')
     return _timetable_back(sid)
 
@@ -1949,7 +2449,7 @@ def _timetable_pdf_info(conn, sid):
 
 
 def _tt_preview(st, rows, skipped, source, existing, replace=False):
-    return render_template('laptop_timetable_read.html', st=st, rows=rows, skipped=skipped[:30],
+    return render_template('gadget_timetable_read.html', st=st, rows=rows, skipped=skipped[:30],
                            skipped_total=len(skipped), source=source, existing=existing,
                            replace=replace, weekdays=WEEKDAYS)
 
@@ -1963,7 +2463,7 @@ def _tt_preview_from_text(sid, st, text, source):
         return _timetable_back(sid)
     found = found[:MAX_TIMETABLE_ROWS]
     with get_db() as conn:
-        existing = list(_laptop_slots(conn, sid))
+        existing = list(_gadget_slots(conn, sid))
     rows, ok = [], []
     for i, r in enumerate(found):
         row = {'idx': i, 'keep': True, 'weekday': r['weekday'], 'start': r['start'],
@@ -1993,11 +2493,11 @@ def _tt_rows_from_form():
              'problem': '', 'clash': False} for i in range(count)]
 
 
-@app.route('/laptops/students/<int:sid>/timetable/pdf')
+@app.route('/gadgets/students/<int:sid>/timetable/pdf')
 @login_required
-def laptop_timetable_pdf(sid):
+def gadget_timetable_pdf(sid):
     with get_db() as conn:
-        st = _laptop_student(conn, sid)
+        st = _gadget_student(conn, sid)
         row = conn.execute("SELECT filename, data FROM laptop_timetable_files WHERE student_id=?",
                            (sid,)).fetchone() if st else None
     if not row:
@@ -2011,9 +2511,9 @@ def laptop_timetable_pdf(sid):
     return resp
 
 
-@app.route('/laptops/students/<int:sid>/timetable/pdf', methods=['POST'])
+@app.route('/gadgets/students/<int:sid>/timetable/pdf', methods=['POST'])
 @login_required
-def laptop_timetable_pdf_upload(sid):
+def gadget_timetable_pdf_upload(sid):
     upload = request.files.get('file')
     if not upload or not upload.filename:
         flash("Choose the student's timetable PDF first.", 'danger')
@@ -2032,10 +2532,10 @@ def laptop_timetable_pdf_upload(sid):
     name = name[-100:]
     admin = current_admin()
     with get_db() as conn:
-        st = _laptop_student(conn, sid)
+        st = _gadget_student(conn, sid)
         if not st:
             flash('Student not found.', 'danger')
-            return redirect(url_for('laptop_students_register'))
+            return redirect(url_for('gadget_students_register'))
         conn.execute("""
             INSERT INTO laptop_timetable_files (student_id, filename, size, data, uploaded_by, uploaded_at)
             VALUES (?,?,?,?,?,?)
@@ -2054,29 +2554,29 @@ def laptop_timetable_pdf_upload(sid):
     return _timetable_back(sid)
 
 
-@app.route('/laptops/students/<int:sid>/timetable/pdf/delete', methods=['POST'])
+@app.route('/gadgets/students/<int:sid>/timetable/pdf/delete', methods=['POST'])
 @login_required
-def laptop_timetable_pdf_delete(sid):
+def gadget_timetable_pdf_delete(sid):
     with get_db() as conn:
-        st = _laptop_student(conn, sid)
+        st = _gadget_student(conn, sid)
         if not st:
             flash('Student not found.', 'danger')
-            return redirect(url_for('laptop_students_register'))
+            return redirect(url_for('gadget_students_register'))
         conn.execute("DELETE FROM laptop_timetable_files WHERE student_id=?", (sid,))
     log_activity('timetable_pdf', f"Removed the timetable PDF of {st['full_name']} ({st['class_name']})")
     flash('Timetable PDF removed. The intervals already saved are unchanged.', 'success')
     return _timetable_back(sid)
 
 
-@app.route('/laptops/students/<int:sid>/timetable/read', methods=['POST'])
+@app.route('/gadgets/students/<int:sid>/timetable/read', methods=['POST'])
 @login_required
-def laptop_timetable_read(sid):
+def gadget_timetable_read(sid):
     pasted = (request.form.get('pasted') or '').strip()
     with get_db() as conn:
-        st = _laptop_student(conn, sid)
+        st = _gadget_student(conn, sid)
         if not st:
             flash('Student not found.', 'danger')
-            return redirect(url_for('laptop_students_register'))
+            return redirect(url_for('gadget_students_register'))
         saved = None if pasted else conn.execute(
             "SELECT filename, data FROM laptop_timetable_files WHERE student_id=?", (sid,)).fetchone()
     if pasted:
@@ -2095,20 +2595,20 @@ def laptop_timetable_read(sid):
     return _tt_preview_from_text(sid, st, text, source)
 
 
-@app.route('/laptops/students/<int:sid>/timetable/read/apply', methods=['POST'])
+@app.route('/gadgets/students/<int:sid>/timetable/read/apply', methods=['POST'])
 @login_required
-def laptop_timetable_read_apply(sid):
+def gadget_timetable_read_apply(sid):
     """Step 2: save the intervals the admin left ticked (after any edits in the preview)."""
     rows = _tt_rows_from_form()
     replace = 'replace' in request.form
     if not rows:
         return _timetable_back(sid)
     with get_db() as conn:
-        st = _laptop_student(conn, sid)
+        st = _gadget_student(conn, sid)
         if not st:
             flash('Student not found.', 'danger')
-            return redirect(url_for('laptop_students_register'))
-        existing = list(_laptop_slots(conn, sid))
+            return redirect(url_for('gadget_students_register'))
+        existing = list(_gadget_slots(conn, sid))
         planned, bad = [], 0
         for r in rows:
             if not r['keep']:
@@ -2140,7 +2640,7 @@ def laptop_timetable_read_apply(sid):
                  f"{st['full_name']} ({st['class_name']}): {len(planned)} interval"
                  f"{'' if len(planned) == 1 else 's'} from the timetable reader")
     flash(f"{len(planned)} interval{'' if len(planned) == 1 else 's'} saved. Record the student's "
-          f"consent again before laptops can be signed out.", 'success')
+          f"consent again before gadgets can be signed out.", 'success')
     return _timetable_back(sid)
 
 
@@ -2207,7 +2707,7 @@ def _overdue_rows(conn):
     return conn.execute("""
         SELECT tt.id, tt.student_name, tt.student_class, tt.expected_return_time,
                tt.signed_out_by, tt.quantity, tt.sign_out_time,
-               tt.took_charger, tt.took_earphones, tt.took_usb, t.tablet_id AS tab_code
+               t.tablet_id AS tab_code
         FROM tablet_transactions tt
         JOIN tablets t ON tt.tablet_id = t.id
         WHERE tt.status='Borrowed' AND tt.expected_return_time < ?
@@ -2225,9 +2725,6 @@ def _overdue_payload(rows):
         'expected': fmt_dt_time(r['expected_return_time']),
         'out': fmt_dt(r['sign_out_time']),
         'qty': r['quantity'] or 1,
-        'charger': bool(r['took_charger']),
-        'earphones': bool(r['took_earphones']),
-        'usb': bool(r['took_usb']),
         'due_ms': _to_ms(r['expected_return_time']),
     } for r in rows]
 
@@ -2251,7 +2748,7 @@ def api_overdue():
 
 @app.route('/api/tablet-status')
 def api_tablet_status():
-    """Live tablet + laptop numbers and overdue lists. Polled every few seconds by
+    """Live tablet + gadget numbers and overdue lists. Polled every few seconds by
     main.js so the banner, menu badges and dashboard update without a page reload."""
     if not _api_admin_ok():
         return jsonify({'error': 'login required'}), 401
@@ -2259,15 +2756,15 @@ def api_tablet_status():
         c = conn.execute(
             "SELECT (SELECT COUNT(*) FROM tablets WHERE is_active=1) AS total, "
             "(SELECT COUNT(*) FROM tablet_transactions WHERE status='Borrowed') AS borrowed, "
-            "(SELECT COUNT(*) FROM laptop_students WHERE is_active=1) AS lap_students, "
+            "(SELECT COUNT(*) FROM laptop_students WHERE is_active=1) AS gad_students, "
             "(SELECT COUNT(DISTINCT se.student_id) FROM laptop_sessions se "
             " JOIN laptop_students ls ON ls.id = se.student_id "
-            " WHERE se.status='Out' AND ls.is_active=1) AS lap_out"
+            " WHERE se.status='Out' AND ls.is_active=1) AS gad_out"
         ).fetchone()
         rows = _overdue_rows(conn)
-        lap_rows = _laptop_overdue_rows(conn)
+        gad_rows = _gadget_overdue_rows(conn)
     total, borrowed, overdue_n = c['total'], c['borrowed'], len(rows)
-    lap_students, lap_out, lap_overdue_n = c['lap_students'], c['lap_out'], len(lap_rows)
+    gad_students, gad_out, gad_overdue_n = c['gad_students'], c['gad_out'], len(gad_rows)
     resp = jsonify({
         'counts': {
             'total': total,
@@ -2278,15 +2775,15 @@ def api_tablet_status():
         # same maths as the dashboard's Tablet Status chart
         'chart': [max(total - borrowed, 0), max(borrowed - overdue_n, 0), overdue_n],
         'overdue': _overdue_payload(rows),
-        'laptops': {
-            'students': lap_students,
-            'out': lap_out,
-            'in_storage': max(lap_students - lap_out, 0),
-            'overdue': lap_overdue_n,
+        'gadgets': {
+            'students': gad_students,
+            'out': gad_out,
+            'in_storage': max(gad_students - gad_out, 0),
+            'overdue': gad_overdue_n,
         },
-        'laptop_chart': [max(lap_students - lap_out, 0), max(lap_out - lap_overdue_n, 0),
-                         lap_overdue_n],
-        'laptop_overdue': _laptop_overdue_payload(lap_rows),
+        'gadget_chart': [max(gad_students - gad_out, 0), max(gad_out - gad_overdue_n, 0),
+                         gad_overdue_n],
+        'gadget_overdue': _gadget_overdue_payload(gad_rows),
         'server_ms': int(_time.time() * 1000),
     })
     resp.headers['Cache-Control'] = 'no-store'
