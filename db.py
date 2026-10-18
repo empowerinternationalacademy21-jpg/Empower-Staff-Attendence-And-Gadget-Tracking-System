@@ -191,9 +191,6 @@ CREATE TABLE IF NOT EXISTS tablet_transactions (
     sign_back_time TEXT,
     signed_out_by TEXT,
     signed_back_by TEXT,
-    took_charger INTEGER DEFAULT 0,
-    took_earphones INTEGER DEFAULT 0,
-    took_usb INTEGER DEFAULT 0,
     status TEXT DEFAULT 'Borrowed',
     created_at TEXT DEFAULT (datetime('now'))
 );
@@ -215,6 +212,7 @@ CREATE TABLE IF NOT EXISTS laptop_students (
     class_name TEXT NOT NULL DEFAULT '',
     laptop_model TEXT DEFAULT '',
     serial_no TEXT DEFAULT '',
+    gadget_type TEXT DEFAULT 'Laptop',
     is_active INTEGER DEFAULT 1,
     consent_by TEXT,
     consent_at TEXT,
@@ -235,6 +233,22 @@ CREATE TABLE IF NOT EXISTS laptop_slots (
 );
 
 CREATE INDEX IF NOT EXISTS idx_laptop_slots_student ON laptop_slots(student_id);
+
+CREATE TABLE IF NOT EXISTS class_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    register TEXT NOT NULL,
+    batch TEXT NOT NULL,
+    student_id INTEGER NOT NULL,
+    student_name TEXT,
+    old_class TEXT,
+    new_class TEXT,
+    new_active INTEGER DEFAULT 1,
+    changed_by TEXT,
+    changed_at TEXT NOT NULL,
+    undone INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_class_changes_batch ON class_changes(register, batch);
 
 CREATE TABLE IF NOT EXISTS laptop_timetable_files (
     student_id INTEGER PRIMARY KEY REFERENCES laptop_students(id),
@@ -268,7 +282,7 @@ CREATE INDEX IF NOT EXISTS idx_laptop_sessions_status ON laptop_sessions(status)
 MIGRATIONS = [
     ("tablet_transactions", "signed_out_by", "TEXT"),
     ("tablet_transactions", "signed_back_by", "TEXT"),
-    ("tablet_transactions", "took_usb", "INTEGER DEFAULT 0"),
+    ("laptop_students", "gadget_type", "TEXT DEFAULT 'Laptop'"),   # Laptop | Tablet (older rows = Laptop)
     ("laptop_slots", "label", "TEXT DEFAULT ''"),     # e.g. "Prep", "Lessons"
 ]
 
