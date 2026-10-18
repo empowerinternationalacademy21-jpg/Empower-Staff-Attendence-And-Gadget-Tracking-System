@@ -1,18 +1,22 @@
 # EIA Gadget Tracking System
 
-Tablet lending and timetable-controlled access to students' personal laptops for
+Tablet lending and timetable-controlled access to students' personal gadgets for
 Empower International Academy.
 
 ## What it does
 
 - **Tablets** — admins sign tablets out to students and back in; overdue tablets are flagged live.
-- **Personal laptops** — students who own a laptop each get a **timetable** (set by an admin, with
-  the student's recorded consent). A laptop can only be signed out **during the student's own
-  slot** — not before, not after, and not on other days. There is no admin override. Laptops kept
-  past the end of the slot appear on the live **Overdue Laptops** page.
+- **Personal gadgets** — students who bring their own gadget (a **Laptop** or a **Tablet**, chosen by the
+  admin when registering them) each get a **timetable** (set by an admin, with
+  the student's recorded consent). A gadget can only be signed out **during the student's own
+  slot** — not before, not after, and not on other days. There is no admin override. Gadgets kept
+  past the end of the slot appear on the live **Overdue Gadgets** page.
 - **Student registers** — one for every student in the school (used for name search on the tablet
-  sign-out page) and one for students with personal laptops. Admins add or remove students by hand
+  sign-out page) and one for students with personal gadgets. Admins add or remove students by hand
   or upload a class-list PDF; the names are shown for checking before anything is saved.
+- **Promoting classes** — at the start of a year, **Promote Classes** moves every student to the next
+  class with one button (after a review screen), or one student / the ticked students at a time. The
+  last promotion can be undone. See below.
 - **Activity log** — every action is recorded with the admin who did it.
 
 ## Pages
@@ -21,28 +25,48 @@ Empower International Academy.
 |-----|--------|-------------|
 | `/` | Public | Home page |
 | `/login` | Public | Admin login |
-| `/dashboard` | Admin | Tablets + laptops overview, charts, live overdue lists |
+| `/dashboard` | Admin | Tablets + gadgets overview, charts, live overdue lists |
 | `/tablets` · `/tablets/add` | Admin | Tablet inventory and registration |
 | `/tablets/signout` | Admin | Sign a tablet out (type a few letters of the student's name) |
 | `/tablets/transactions` · `/tablets/overdue` | Admin | Tablet history and overdue tablets |
-| `/students` | Admin | School student register (add / remove / PDF upload) |
-| `/laptops` | Admin | **Laptop Desk** — sign laptops out and in |
-| `/laptops/overdue` | Admin | Overdue laptops (live) |
-| `/laptops/students` | Admin | Laptop students register (add / remove / PDF upload) |
-| `/laptops/students/<id>/timetable` | Admin | Edit a student's timetable, attach their timetable PDF, type or read intervals, and record their consent |
+| `/students` · `/students/promote` | Admin | School student register (add / remove / PDF upload) and class promotion |
+| `/gadgets` | Admin | **Gadget Desk** — sign gadgets out and in |
+| `/gadgets/overdue` | Admin | Overdue gadgets (live) |
+| `/gadgets/students` · `/gadgets/students/promote` | Admin | Gadget students register (choose Laptop or Tablet; add / remove / PDF upload) and class promotion |
+| `/gadgets/students/<id>/timetable` | Admin | Edit a student's timetable, attach their timetable PDF, type or read intervals, and record their consent |
 | `/activity` | Admin | Team activity log |
 | `/api/tablet-status` | Admin API | Live numbers polled by the pages every 10 seconds |
 
-## Laptop timetable rules
+## Promoting students to the next class
+
+Both registers have a **Promote Classes** button. The page lists every class with the class it
+will move to, for example `P.5 → P.6`, `P.7 → S.1`, `Baby Class → Middle Class → Top Class → P.1`.
+Names such as `Primary Five`, `Senior 3 B` or `Year 7` are understood too, and a stream letter is
+kept (`S.2A → S.3A`). The admin can change any class's destination, choose **Leave the school**
+for a final class, or **Keep in this class**, and then presses **Promote the whole school**.
+
+- If the school has no secondary classes, `P.7` is offered as *Leave the school* instead of `S.1`.
+- A class name the system does not recognise is never guessed — it is set to *Keep* until the admin
+  chooses.
+- Students who leave are hidden from the register, not deleted.
+- Each student can also be promoted with the **Promote** button on their row, several can be
+  ticked and promoted together, or moved to any class typed in (**Move selected to class**).
+- If two students have the same name, one that would end up beside a namesake in the same class is
+  skipped and reported rather than forced. A student whose gadget is still signed out cannot be
+  made to leave the school.
+- Every change is recorded, and the most recent one can be reversed with **Undo** (students whose
+  class was edited afterwards are left alone).
+
+## Gadget timetable rules
 
 1. A student needs at least one slot (day + start time + end time, school time). A day can have
    **several intervals** — e.g. Tuesday 11:30 AM–3:20 PM for lessons *and* Tuesday 7:00–9:00 PM
    for prep — and each interval can have a name ("Prep", "Lessons").
 2. The student must have agreed to the timetable. Any change to a slot clears the consent, so it
-   has to be recorded again before laptops can be signed out.
-3. A laptop can be signed out only while a slot is open (start time inclusive, end time exclusive).
-4. The laptop is due back at the end of that slot. After that it shows as overdue.
-5. Signing a laptop **in** is allowed at any time; a late return is recorded as late.
+   has to be recorded again before gadgets can be signed out.
+3. A gadget can be signed out only while a slot is open (start time inclusive, end time exclusive).
+4. The gadget is due back at the end of that slot. After that it shows as overdue.
+5. Signing a gadget **in** is allowed at any time; a late return is recorded as late.
 
 ## Timetable PDF and quick entry
 
@@ -67,8 +91,20 @@ On a student's timetable page an admin can:
 - Saved intervals either **add to** the current timetable or **replace** it (the admin chooses in
   the preview). As with any timetable change, the student's consent must be recorded again.
 
-Sign-out is allowed only inside an interval and the laptop is due back when that interval ends.
-Sign-in is always allowed, so a student can never be stuck holding a laptop.
+Sign-out is allowed only inside an interval and the gadget is due back when that interval ends.
+Sign-in is always allowed, so a student can never be stuck holding a gadget.
+
+## Tablet sign-out
+
+Admins pick a tablet, type a few letters of the student's name (the full name and class fill in from
+the school register), choose the return time and sign it out. There are no accessory options.
+(Older records that still carry charger / earphones / USB data keep it in the database; it is no
+longer shown or collected.)
+
+## Older web addresses
+
+The gadget pages used to live under `/laptops`. Those addresses still work and send you to the
+matching `/gadgets` page.
 
 ## Configuration (environment variables)
 
