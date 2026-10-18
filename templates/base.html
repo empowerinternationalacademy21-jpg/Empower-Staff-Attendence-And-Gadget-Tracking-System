@@ -53,21 +53,21 @@
         </div>
       </div>
 
-      <!-- Laptops dropdown -->
+      <!-- Gadgets dropdown -->
       <div class="nav-dropdown">
-        <a href="{{ url_for('laptop_desk') }}" class="nav-dropdown-toggle">
-          <i class="fas fa-laptop"></i> Laptops <span class="nav-badge hidden" data-laptop-overdue-count>0</span> <i class="fas fa-chevron-down nav-caret"></i>
+        <a href="{{ url_for('gadget_desk') }}" class="nav-dropdown-toggle">
+          <i class="fas fa-laptop"></i> Gadgets <span class="nav-badge hidden" data-gadget-overdue-count>0</span> <i class="fas fa-chevron-down nav-caret"></i>
         </a>
         <div class="nav-dropdown-menu">
-          <a href="{{ url_for('laptop_desk') }}">
-            <i class="fas fa-door-open"></i> Laptop Desk
+          <a href="{{ url_for('gadget_desk') }}">
+            <i class="fas fa-door-open"></i> Gadget Desk
           </a>
-          <a href="{{ url_for('laptop_overdue_page') }}">
-            <i class="fas fa-bell"></i> Overdue <span class="nav-badge hidden" data-laptop-overdue-count>0</span>
+          <a href="{{ url_for('gadget_overdue_page') }}">
+            <i class="fas fa-bell"></i> Overdue <span class="nav-badge hidden" data-gadget-overdue-count>0</span>
           </a>
           <div class="dropdown-divider"></div>
-          <a href="{{ url_for('laptop_students_register') }}">
-            <i class="fas fa-user-clock"></i> Laptop Students &amp; Timetables
+          <a href="{{ url_for('gadget_students_register') }}">
+            <i class="fas fa-user-clock"></i> Gadget Students &amp; Timetables
           </a>
         </div>
       </div>
@@ -84,7 +84,7 @@
 
 <!-- OVERDUE NOTIFICATION BANNER (only when logged in) -->
 {% if session.get('logged_in') %}
-<div id="overdue-banner" class="overdue-banner hidden" data-href="{{ url_for('overdue_tablets') }}" data-href-laptops="{{ url_for('laptop_overdue_page') }}" title="Click to see everything that is overdue"></div>
+<div id="overdue-banner" class="overdue-banner hidden" data-href="{{ url_for('overdue_tablets') }}" data-href-gadgets="{{ url_for('gadget_overdue_page') }}" title="Click to see everything that is overdue"></div>
 {% endif %}
 
 <!-- FLASH MESSAGES -->
