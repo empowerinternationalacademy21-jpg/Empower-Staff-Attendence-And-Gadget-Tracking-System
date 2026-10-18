@@ -71,31 +71,6 @@
       </div>
     </div>
 
-    <div class="form-row checkbox-row three">
-      <div class="form-group checkbox-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="took_charger" {{ 'checked' if 'took_charger' in form else '' }}/>
-          <i class="fas fa-plug"></i> Took a Charger
-        </label>
-      </div>
-      <div class="form-group checkbox-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="took_earphones" {{ 'checked' if 'took_earphones' in form else '' }}/>
-          <i class="fas fa-headphones"></i> Took Earphones
-        </label>
-      </div>
-      <div class="form-group checkbox-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="took_usb" {{ 'checked' if 'took_usb' in form else '' }}/>
-          <i class="fab fa-usb"></i> Took a USB
-        </label>
-      </div>
-    </div>
-    <style>
-      .checkbox-row.three { grid-template-columns: repeat(3, 1fr); }
-      @media (max-width: 768px) { .checkbox-row.three { grid-template-columns: 1fr; } }
-    </style>
-
     <div class="form-actions">
       <button type="submit" class="btn btn-primary btn-lg" {% if not tablets %}disabled{% endif %}>
         <i class="fas fa-sign-out-alt"></i> Sign Out Tablet
