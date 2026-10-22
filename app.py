@@ -113,6 +113,8 @@ ACTION_META = {
     'laptop_signout':  ('Signed out gadget',     'fa-laptop',       'a-amber'),
     'laptop_return':   ('Signed in gadget',      'fa-undo',         'a-teal'),
     'laptop_blocked':  ('Gadget sign-out blocked', 'fa-ban',        'a-red'),
+    'tablet_blocked':  ('Tablet sign-out blocked', 'fa-ban',        'a-red'),
+    'blacklisted':     ('Added to blacklist',    'fa-user-slash',   'a-red'),
     # kept only so older log entries still display properly
     'staff_add':       ('Added staff',           'fa-user-plus',    'a-green'),
     'staff_edit':      ('Edited staff',          'fa-user-edit',    'a-blue'),
@@ -366,6 +368,244 @@ def dashboard():
 
 
 # ─────────────────────────────────────────────
+# FAIR-USE RULES
+#   1. A student may borrow a tablet only ONCE per school day.
+#   2. A tablet or personal gadget returned more than 20 minutes after it was
+#      due puts the student on the BLACKLIST: no tablet or gadget sign-out for
+#      4 days. After that the student can sign out again automatically.
+# The server enforces both rules, so they cannot be bypassed from the screen.
+# ─────────────────────────────────────────────
+
+def _env_int(name, default):
+    try:
+        return max(0, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+LATE_GRACE_MINUTES = _env_int('BLACKLIST_LATE_MINUTES', 20)   # later than this = blacklisted
+BLACKLIST_DAYS = max(1, _env_int('BLACKLIST_DAYS', 4))         # length of the sign-out ban
+
+
+def person_key(name, cls):
+    """Identifies a student: same name and class, ignoring case, spaces and punctuation
+    ('Mukasa  Grace' / 'P.5' is the same person as 'mukasa grace' / 'P5')."""
+    def flat(text):
+        return re.sub(r'[\W_]+', '', (text or '').casefold())
+    return f"{flat(name)}|{flat(cls)}"
+
+
+def _who(name, cls):
+    return f"{name} ({cls})" if cls else name
+
+
+def _utc_naive(value):
+    """Stored UTC text -> naive UTC datetime."""
+    return to_local(value).astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def minutes_between(due_iso, back_iso):
+    """Minutes from the due time to the return (negative = returned early)."""
+    return (to_local(back_iso) - to_local(due_iso)).total_seconds() / 60
+
+
+def active_blacklist(conn, key, now_iso=None):
+    """The blacklist entry that currently blocks this student, or None."""
+    now_iso = now_iso or datetime.utcnow().isoformat()
+    return conn.execute(
+        "SELECT * FROM blacklist WHERE person_key=? AND blocked_until > ? "
+        "ORDER BY blocked_until DESC LIMIT 1", (key, now_iso)).fetchone()
+
+
+def record_late_return(conn, *, kind, source, source_id, name, cls, device,
+                       due_iso, back_iso, admin):
+    """Blacklist the student when the item came back MORE than LATE_GRACE_MINUTES
+    after it was due. Returns the new blacklist entry, or None (on time / already
+    recorded). Safe to call twice for the same return."""
+    if not due_iso:
+        return None
+    late = minutes_between(due_iso, back_iso)
+    if late <= LATE_GRACE_MINUTES:
+        return None
+    until_iso = (_utc_naive(back_iso) + timedelta(days=BLACKLIST_DAYS)).isoformat()
+    res = conn.execute("""
+        INSERT OR IGNORE INTO blacklist
+            (person_key, person_name, class_name, kind, source, source_id, device,
+             due_time, returned_time, minutes_late, blocked_from, blocked_until, recorded_by)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (person_key(name, cls), name, cls or '', kind, source, source_id, device or '',
+          due_iso, back_iso, int(late), back_iso, until_iso, admin))
+    if not res.rowcount:
+        return None
+    log_activity('blacklisted',
+                 f"{_who(name, cls)} returned a {kind.lower()} {int(late)} min late "
+                 f"({device or kind}) — no sign-outs until {fmt_dt_full(until_iso)}",
+                 admin=admin)
+    return {'name': name, 'minutes_late': int(late), 'until': until_iso}
+
+
+def blacklist_short(row):
+    """One-sentence reason, for flash messages and the gadget desk."""
+    return (f"{_who(row['person_name'], row['class_name'])} is on the blacklist after returning a "
+            f"{row['kind'].lower()} {row['minutes_late']} minutes late, and cannot sign anything "
+            f"out until {fmt_dt_full(row['blocked_until'])}.")
+
+
+def overdue_item_held(conn, key):
+    """(description, due_iso) of an unreturned tablet/gadget that is already past
+    the allowance (so the student cannot take another one), or None."""
+    cutoff = (datetime.utcnow() - timedelta(minutes=LATE_GRACE_MINUTES)).isoformat()
+    for r in conn.execute(
+            "SELECT tt.student_name, tt.student_class, tt.expected_return_time, "
+            "t.tablet_id AS code FROM tablet_transactions tt "
+            "JOIN tablets t ON t.id = tt.tablet_id "
+            "WHERE tt.status='Borrowed' AND tt.expected_return_time < ?", (cutoff,)).fetchall():
+        if person_key(r['student_name'], r['student_class']) == key:
+            return f"tablet {r['code']}", r['expected_return_time']
+    for r in conn.execute(
+            "SELECT t.full_name, t.class_name, se.expected_return_time "
+            "FROM laptop_sessions se JOIN laptop_students t ON t.id = se.student_id "
+            "WHERE se.status='Out' AND se.expected_return_time < ?", (cutoff,)).fetchall():
+        if person_key(r['full_name'], r['class_name']) == key:
+            return 'their personal gadget', r['expected_return_time']
+    return None
+
+
+def signout_barrier(conn, name, cls):
+    """Why this student may not sign out ANY tablet or gadget right now, or None.
+    Returns a dict for the screen: title, message and a few detail rows."""
+    key, who = person_key(name, cls), _who(name, cls)
+
+    row = active_blacklist(conn, key)
+    if row:
+        device = f" ({row['device']})" if row['device'] else ''
+        return {
+            'title': 'Sign-out denied: student is on the blacklist',
+            'until': row['blocked_until'],
+            'message': (f"{who} returned a {row['kind'].lower()} more than {LATE_GRACE_MINUTES} minutes "
+                        f"after it was due. Sign-outs are suspended for {BLACKLIST_DAYS} days."),
+            'details': [
+                ('Student', who),
+                ('Late return', f"{row['kind']}{device}, {row['minutes_late']} min late"),
+                ('Suspended since', fmt_dt_full(row['blocked_from'])),
+                ('Can sign out again', fmt_dt_full(row['blocked_until'])),
+            ],
+        }
+
+    held = overdue_item_held(conn, key)
+    if held:
+        what, due_iso = held
+        mins = int(minutes_between(due_iso, to_utc_iso(local_now())))
+        return {
+            'title': 'Sign-out denied: an earlier item has not been returned',
+            'message': (f"{who} still has {what}, which was due back at {fmt_dt_time(due_iso)} "
+                        f"and is now {fmt_minutes(mins)} overdue. It must be returned first."),
+            'details': [('Student', who), ('Outstanding item', what),
+                        ('Was due', fmt_dt_full(due_iso))],
+        }
+    return None
+
+
+def tablet_taken_today(conn, key, now_local=None):
+    """The tablet this student has already been given today (school day), or None."""
+    now_local = now_local or local_now()
+    start = datetime.combine(now_local.date(), datetime.min.time(), tzinfo=APP_TZ)
+    rows = conn.execute(
+        "SELECT tt.student_name, tt.student_class, tt.sign_out_time, t.tablet_id AS code "
+        "FROM tablet_transactions tt JOIN tablets t ON t.id = tt.tablet_id "
+        "WHERE tt.sign_out_time >= ? AND tt.sign_out_time < ? ORDER BY tt.sign_out_time",
+        (to_utc_iso(start), to_utc_iso(start + timedelta(days=1)))).fetchall()
+    for r in rows:
+        if person_key(r['student_name'], r['student_class']) == key:
+            return r
+    return None
+
+
+def daily_limit_denial(name, cls, taken):
+    who = _who(name, cls)
+    return {
+        'title': 'Sign-out denied: daily tablet limit reached',
+        'message': (f"{who} has already borrowed a tablet today. Each student may sign out "
+                    f"a tablet only once per school day. They can borrow again tomorrow."),
+        'details': [
+            ('Student', who),
+            ('Tablet issued today', taken['code']),
+            ('Issued at', fmt_dt_time(taken['sign_out_time'])),
+            ('Next eligible', 'Tomorrow'),
+        ],
+    }
+
+
+def student_flags(conn):
+    """person_key -> (tag, note) for the student search lists, so an admin sees
+    'BLACKLISTED' / 'TAKEN TODAY' before pressing the button."""
+    flags = {}
+    now_iso = datetime.utcnow().isoformat()
+    now_local = local_now()
+    start = datetime.combine(now_local.date(), datetime.min.time(), tzinfo=APP_TZ)
+    for r in conn.execute(
+            "SELECT tt.student_name, tt.student_class, t.tablet_id AS code "
+            "FROM tablet_transactions tt JOIN tablets t ON t.id = tt.tablet_id "
+            "WHERE tt.sign_out_time >= ? AND tt.sign_out_time < ?",
+            (to_utc_iso(start), to_utc_iso(start + timedelta(days=1)))).fetchall():
+        flags[person_key(r['student_name'], r['student_class'])] = (
+            'TAKEN TODAY', f"Tablet {r['code']} already issued today")
+    for r in conn.execute(      # blacklist wins over 'taken today'
+            "SELECT person_key, blocked_until FROM blacklist WHERE blocked_until > ?",
+            (now_iso,)).fetchall():
+        flags[r['person_key']] = ('BLACKLISTED', f"Suspended until {fmt_dt_full(r['blocked_until'])}")
+    return flags
+
+
+def _time_left(until_iso):
+    secs = int((to_local(until_iso) - local_now()).total_seconds())
+    if secs <= 0:
+        return 'Expired'
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins = rem // 60
+    if days:
+        return f'{days} d {hours} h'
+    if hours:
+        return f'{hours} h {mins} min'
+    return f'{max(mins, 1)} min'
+
+
+def _blacklist_row(r):
+    now = local_now()
+    start, end = to_local(r['blocked_from']), to_local(r['blocked_until'])
+    span = max((end - start).total_seconds(), 1)
+    done = min(max((now - start).total_seconds() / span, 0), 1)
+    return {
+        'id': r['id'], 'name': r['person_name'], 'class': r['class_name'] or '',
+        'kind': r['kind'], 'device': r['device'] or '', 'late': r['minutes_late'],
+        'due': r['due_time'], 'returned': r['returned_time'],
+        'from': r['blocked_from'], 'until': r['blocked_until'],
+        'left': _time_left(r['blocked_until']), 'progress': int(done * 100),
+        'by': r['recorded_by'] or '',
+    }
+
+
+@app.route('/blacklist')
+@login_required
+def blacklist_page():
+    """Students who returned a tablet or gadget more than 20 minutes late."""
+    now_iso = datetime.utcnow().isoformat()
+    with get_db() as conn:
+        active = conn.execute(
+            "SELECT * FROM blacklist WHERE blocked_until > ? ORDER BY blocked_until",
+            (now_iso,)).fetchall()
+        history = conn.execute(
+            "SELECT * FROM blacklist WHERE blocked_until <= ? "
+            "ORDER BY blocked_until DESC LIMIT 100", (now_iso,)).fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM blacklist").fetchone()[0]
+    return render_template('blacklist.html',
+                           active=[_blacklist_row(r) for r in active],
+                           history=[_blacklist_row(r) for r in history],
+                           total=total, grace=LATE_GRACE_MINUTES, days=BLACKLIST_DAYS)
+
+
+# ─────────────────────────────────────────────
 # TABLET MANAGEMENT
 # ─────────────────────────────────────────────
 
@@ -539,6 +779,7 @@ def tablet_signout():
     """The logged-in admin signs a tablet out and types the return time."""
     admin = current_admin()
     form = request.form if request.method == 'POST' else {}
+    denial = None          # set when a fair-use rule stops the sign-out
 
     with get_db() as conn:
         if request.method == 'POST':
@@ -567,7 +808,22 @@ def tablet_signout():
             if not error and tablet_status(conn, tablet_db_id) == 'Borrowed':
                 error = 'That tablet is currently borrowed. Choose another.'
 
-            if error:
+            # Fair-use rules: blacklist / unreturned item first, then once per day
+            if not error:
+                denial = signout_barrier(conn, student_name, student_class)
+                if not denial:
+                    taken = tablet_taken_today(conn, person_key(student_name, student_class),
+                                               now_local)
+                    if taken:
+                        denial = daily_limit_denial(student_name, student_class, taken)
+                if denial:
+                    log_activity('tablet_blocked',
+                                 f"Blocked: {_who(student_name, student_class)} — "
+                                 f"{denial['title'].split(': ', 1)[-1]}")
+
+            if denial:
+                pass                        # the form is shown again with the denial notice
+            elif error:
                 flash(error, 'danger')      # the form is shown again with what was typed
             else:
                 duration_hours = round((ret_local - now_local).total_seconds() / 3600, 2)
@@ -596,10 +852,18 @@ def tablet_signout():
         register = conn.execute(
             "SELECT full_name, class_name FROM students WHERE is_active=1 "
             "ORDER BY full_name COLLATE NOCASE").fetchall()
-    students = [{'n': r['full_name'], 'c': r['class_name'] or ''} for r in register]
+        flags = student_flags(conn)
+    students = []
+    for r in register:
+        item = {'n': r['full_name'], 'c': r['class_name'] or ''}
+        flag = flags.get(person_key(r['full_name'], r['class_name']))
+        if flag:
+            item['tag'], item['sub'] = flag
+        students.append(item)
     return render_template('tablet_signout.html', tablets=available, admin=admin,
                            form=form, server_now_ms=int(_time.time() * 1000),
-                           tz_name=APP_TZ_NAME, students=students)
+                           tz_name=APP_TZ_NAME, students=students, denial=denial,
+                           blacklist_days=BLACKLIST_DAYS, late_minutes=LATE_GRACE_MINUTES)
 
 
 @app.route('/tablets/transactions')
@@ -633,7 +897,8 @@ def tablet_return(tx_id):
             else url_for('tablet_transactions'))
     with get_db() as conn:
         tx = conn.execute(
-            "SELECT tt.student_name, tt.status, tt.signed_out_by, t.tablet_id AS tab_code "
+            "SELECT tt.student_name, tt.student_class, tt.status, tt.signed_out_by, "
+            "tt.expected_return_time, t.tablet_id AS tab_code "
             "FROM tablet_transactions tt JOIN tablets t ON tt.tablet_id = t.id "
             "WHERE tt.id=?", (tx_id,)
         ).fetchone()
@@ -643,16 +908,28 @@ def tablet_return(tx_id):
         if tx['status'] != 'Borrowed':
             flash(f"Tablet {tx['tab_code']} was already signed back in.", 'info')
             return redirect(back)
+        back_iso = datetime.utcnow().isoformat()
         conn.execute(
             "UPDATE tablet_transactions "
             "SET status='Returned', sign_back_time=?, signed_back_by=? "
             "WHERE id=? AND status='Borrowed'",
-            (datetime.utcnow().isoformat(), admin, tx_id))
+            (back_iso, admin, tx_id))
+        # more than 20 minutes late -> blacklist (4 days without sign-outs)
+        banned = record_late_return(
+            conn, kind='Tablet', source='tablet', source_id=tx_id,
+            name=tx['student_name'], cls=tx['student_class'], device=tx['tab_code'],
+            due_iso=tx['expected_return_time'], back_iso=back_iso, admin=admin)
     log_activity('tablet_return',
                  f"Signed in {tx['tab_code']} from {tx['student_name']}"
                  + (f" (signed out by {tx['signed_out_by']})" if tx['signed_out_by'] else ''))
-    flash(f"Tablet {tx['tab_code']} returned by {tx['student_name']}, "
-          f"signed in by {admin}.", 'success')
+    if banned:
+        flash(f"Tablet {tx['tab_code']} returned by {tx['student_name']}, signed in by {admin}. "
+              f"Returned {banned['minutes_late']} minutes late: {tx['student_name']} has been added "
+              f"to the blacklist and cannot sign anything out until {fmt_dt_full(banned['until'])}.",
+              'warning')
+    else:
+        flash(f"Tablet {tx['tab_code']} returned by {tx['student_name']}, "
+              f"signed in by {admin}.", 'success')
     return redirect(back)
 
 
@@ -2133,6 +2410,10 @@ def gadget_desk():
         recent = conn.execute(
             _GADGET_SESSION_SELECT + " WHERE se.status='Returned' "
             "ORDER BY se.sign_back_time DESC LIMIT 10").fetchall()
+        banned_rows = conn.execute(
+            "SELECT * FROM blacklist WHERE blocked_until > ? ORDER BY blocked_until",
+            (now_utc,)).fetchall()
+    banned = {r['person_key']: r for r in banned_rows}
 
     slots_by = {}
     for s in slot_rows:
@@ -2144,14 +2425,16 @@ def gadget_desk():
         slots = slots_by.get(st['id'], [])
         verdict = check_gadget_access(st['full_name'], slots, bool(st['consent_at']),
                                       st['id'] in out_ids, now_local)
+        ban = banned.get(person_key(st['full_name'], st['class_name']))
         people.append({
             'id': st['id'], 'n': st['full_name'], 'c': st['class_name'] or '',
             'gadget': _gadget_device(st), 'type': _gadget_type(st),
             'consent': bool(st['consent_at']),
             'out': st['id'] in out_ids,
+            'blocked': blacklist_short(ban) if ban else '',
             'slots': [[int(s['weekday']), s['start_time'], s['end_time']] for s in slots],
         })
-        if verdict['ok']:
+        if verdict['ok'] and not ban:
             allowed_now.append({'id': st['id'], 'n': st['full_name'], 'c': st['class_name'] or '',
                                 'until': fmt12(verdict['slot']['end_time'])})
 
@@ -2189,6 +2472,15 @@ def gadget_signout():
         if not st:
             flash('That student is not in the gadget register.', 'danger')
             return redirect(url_for('gadget_desk'))
+        barrier = signout_barrier(conn, st['full_name'], st['class_name'])
+        if barrier:
+            log_activity('laptop_blocked',
+                         f"Blocked: {_who(st['full_name'], st['class_name'])} — "
+                         f"{barrier['title'].split(': ', 1)[-1]}")
+            again = (f" They can sign out again on {fmt_dt_full(barrier['until'])}."
+                     if barrier.get('until') else '')
+            flash('Sign-out denied. ' + barrier['message'] + again, 'danger')
+            return back
         verdict = check_gadget_access(
             st['full_name'], _gadget_slots(conn, st['id']), bool(st['consent_at']),
             _gadget_is_out(conn, st['id']), now_local)
@@ -2228,7 +2520,8 @@ def gadget_return(session_id):
     now = datetime.utcnow().isoformat()
     with get_db() as conn:
         se = conn.execute(
-            "SELECT se.status, se.expected_return_time, t.full_name, t.class_name, t.gadget_type "
+            "SELECT se.status, se.expected_return_time, t.full_name, t.class_name, "
+            "t.gadget_type, t.laptop_model, t.serial_no "
             "FROM laptop_sessions se JOIN laptop_students t ON t.id = se.student_id "
             "WHERE se.id=?", (session_id,)).fetchone()
         if not se:
@@ -2239,13 +2532,24 @@ def gadget_return(session_id):
             return back
         conn.execute("UPDATE laptop_sessions SET status='Returned', sign_back_time=?, "
                      "signed_back_by=? WHERE id=? AND status='Out'", (now, admin, session_id))
+        # more than 20 minutes late -> blacklist (4 days without sign-outs)
+        banned = record_late_return(
+            conn, kind='Gadget', source='gadget', source_id=session_id,
+            name=se['full_name'], cls=se['class_name'], device=_gadget_device(se),
+            due_iso=se['expected_return_time'], back_iso=now, admin=admin)
     late_min = int((datetime.fromisoformat(now) -
                     datetime.fromisoformat(se['expected_return_time'])).total_seconds() // 60)
     note = 'on time' if late_min <= 0 else f'{late_min} min late'
     log_activity('laptop_return', f"Signed in {_gadget_type(se).lower()} from {se['full_name']} "
                                   f"({se['class_name']}) — {note}")
-    flash(f"{se['full_name']}'s {_gadget_type(se).lower()} signed in by {admin} ({note}).",
-          'success' if late_min <= 0 else 'warning')
+    if banned:
+        flash(f"{se['full_name']}'s {_gadget_type(se).lower()} signed in by {admin} ({note}). "
+              f"More than {LATE_GRACE_MINUTES} minutes late: {se['full_name']} has been added to the "
+              f"blacklist and cannot sign anything out until {fmt_dt_full(banned['until'])}.",
+              'warning')
+    else:
+        flash(f"{se['full_name']}'s {_gadget_type(se).lower()} signed in by {admin} ({note}).",
+              'success' if late_min <= 0 else 'warning')
     return back
 
 
@@ -2857,6 +3161,19 @@ def initials(name):
     if len(parts) >= 2:
         return (parts[0][0] + parts[1][0]).upper()
     return (parts[0][:2] if parts else '?').upper()
+
+
+@app.template_filter('fmt_minutes')
+def fmt_minutes(minutes):
+    """35 -> '35 min', 95 -> '1 h 35 min'."""
+    try:
+        total = int(minutes)
+    except (TypeError, ValueError):
+        return '—'
+    h, m = divmod(total, 60)
+    if h and m:
+        return f'{h} h {m} min'
+    return f'{h} h' if h else f'{m} min'
 
 
 @app.template_filter('fmt_duration')
