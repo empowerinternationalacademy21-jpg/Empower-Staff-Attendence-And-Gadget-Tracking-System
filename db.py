@@ -274,6 +274,30 @@ CREATE TABLE IF NOT EXISTS laptop_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_laptop_sessions_status ON laptop_sessions(status);
+
+CREATE TABLE IF NOT EXISTS blacklist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_key TEXT NOT NULL,
+    person_name TEXT NOT NULL,
+    class_name TEXT DEFAULT '',
+    kind TEXT NOT NULL,
+    source TEXT NOT NULL,
+    source_id INTEGER NOT NULL,
+    device TEXT DEFAULT '',
+    due_time TEXT NOT NULL,
+    returned_time TEXT NOT NULL,
+    minutes_late INTEGER NOT NULL,
+    blocked_from TEXT NOT NULL,
+    blocked_until TEXT NOT NULL,
+    recorded_by TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_blacklist_source ON blacklist(source, source_id);
+
+CREATE INDEX IF NOT EXISTS idx_blacklist_person ON blacklist(person_key, blocked_until);
+
+CREATE INDEX IF NOT EXISTS idx_tablet_tx_signout ON tablet_transactions(sign_out_time);
 """
 
 
