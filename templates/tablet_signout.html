@@ -7,13 +7,29 @@
     <h1><i class="fas fa-hand-holding"></i> Tablet Sign-Out</h1>
     <p class="form-note">Pick a tablet, type a few letters of the student's name, choose the return time and sign it out.</p>
   </div>
-  <div class="ld-clock" title="School time ({{ tz_name }})"><i class="far fa-clock"></i> <span id="soClock">—</span></div>
+  <div class="so-clock" title="School time ({{ tz_name }})"><i class="far fa-clock"></i> <span id="soClock">—</span></div>
 </div>
 
-<div class="card" style="max-width:640px;margin:0 auto;padding:1.5rem">
-  <div class="form-note" style="margin-bottom:1rem">
+<div class="card so-card">
+  <div class="so-approver">
     <i class="fas fa-user-shield"></i> Recorded as approved by <strong>{{ admin }}</strong>
   </div>
+
+  {% if denial %}
+  <div class="denial" role="alert">
+    <div class="denial-icon"><i class="fas fa-ban"></i></div>
+    <div class="denial-body">
+      <h3>{{ denial['title'] }}</h3>
+      <p>{{ denial['message'] }}</p>
+      <dl class="denial-grid">
+        {% for label, value in denial['details'] %}
+        <div><dt>{{ label }}</dt><dd>{{ value }}</dd></div>
+        {% endfor %}
+      </dl>
+      <p class="denial-foot"><i class="fas fa-info-circle"></i> No tablet was issued and this attempt has been recorded in the activity log.</p>
+    </div>
+  </div>
+  {% endif %}
 
   {% if tablets %}
   <form method="POST" action="{{ url_for('tablet_signout') }}" id="soForm" autocomplete="off">
@@ -33,6 +49,7 @@
       <label for="student_name">Student name</label>
       <input type="text" name="student_name" id="student_name" class="form-control"
              placeholder="Type a few letters, e.g. muk gra" value="{{ form.get('student_name', '') }}" required/>
+      <div class="so-warn" id="soWarn" hidden></div>
     </div>
 
     <div class="form-group">
@@ -54,9 +71,15 @@
       <span class="form-note">Must be later than the current time today.</span>
     </div>
 
-    <button class="btn btn-primary btn-lg btn-block" type="submit">
+    <button class="btn btn-primary btn-lg btn-block" type="submit" id="soBtn">
       <i class="fas fa-hand-holding"></i> Sign Out Tablet
     </button>
+
+    <ul class="so-rules">
+      <li><i class="fas fa-check-circle"></i> One tablet per student per school day.</li>
+      <li><i class="fas fa-check-circle"></i> A tablet or gadget returned more than {{ late_minutes }} minutes late means {{ blacklist_days }} days without sign-outs.
+        <a href="{{ url_for('blacklist_page') }}">View blacklist</a></li>
+    </ul>
   </form>
   {% else %}
   <div class="empty-state small">
@@ -67,10 +90,55 @@
   {% endif %}
 </div>
 
+<style>
+  .so-card { max-width: 660px; margin: 0 auto; padding: 1.5rem; }
+  .so-approver { font-size: .8rem; color: var(--ink-mid); background: var(--navy-ghost, #eef1f8);
+                 border-radius: 8px; padding: .5rem .7rem; margin-bottom: 1.1rem; }
+  .so-clock { display: inline-flex; align-items: center; gap: .5rem; font-weight: 800; color: var(--navy);
+              background: var(--white); border: 1px solid var(--ink-rule); border-radius: 999px; padding: .5rem 1rem; }
+  .so-rules { list-style: none; margin: 1.1rem 0 0; padding: .9rem 1rem; border-radius: 10px;
+              background: var(--navy-ghost, #f4f7fc); font-size: .8rem; color: var(--ink-light); display: grid; gap: .35rem; }
+  .so-rules i { color: var(--green); margin-right: .4rem; }
+  .so-rules a { color: var(--navy); font-weight: 700; text-decoration: underline; margin-left: .25rem; }
+
+  /* denial notice */
+  .denial { display: flex; gap: 1rem; align-items: flex-start; margin-bottom: 1.4rem; padding: 1.1rem 1.2rem;
+            border-radius: 14px; border: 1px solid rgba(214,48,65,.28); border-left: 4px solid var(--danger);
+            background: rgba(214,48,65,.06); }
+  .denial-icon { flex: none; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center;
+                 justify-content: center; background: rgba(214,48,65,.12); color: var(--danger); font-size: 1.05rem; }
+  .denial-body { min-width: 0; }
+  .denial-body h3 { margin: 0 0 .3rem; font-size: 1rem; color: #8b1020; }
+  .denial-body > p { margin: 0 0 .8rem; font-size: .88rem; color: var(--ink-mid); line-height: 1.5; }
+  .denial-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .6rem .9rem; margin: 0 0 .8rem; }
+  .denial-grid dt { font-size: .68rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-ghost); }
+  .denial-grid dd { margin: .1rem 0 0; font-size: .88rem; font-weight: 700; color: var(--ink); }
+  .denial-body .denial-foot { margin: 0; font-size: .76rem; color: var(--ink-light); }
+
+  /* early warning when a flagged student is picked */
+  .so-warn { margin-top: .5rem; padding: .55rem .75rem; border-radius: 8px; font-size: .82rem; font-weight: 600;
+             background: rgba(214,48,65,.07); border: 1px solid rgba(214,48,65,.25); color: #8b1020; }
+  .so-warn i { margin-right: .4rem; }
+</style>
+
 <script src="{{ url_for('static', filename='js/student-picker.js') }}"></script>
 <script>
 (function () {
   var students = {{ students|tojson }};
+  var warn = document.getElementById('soWarn');
+
+  function showWarn(item) {
+    if (!warn) return;
+    if (item && item.tag) {
+      warn.textContent = '';
+      var ic = document.createElement('i'); ic.className = 'fas fa-exclamation-triangle';
+      warn.appendChild(ic);
+      warn.appendChild(document.createTextNode(
+        (item.tag === 'BLACKLISTED' ? 'Blacklisted. ' : 'Already borrowed today. ') + (item.sub || '') +
+        '. Sign-out will be denied.'));
+      warn.hidden = false;
+    } else { warn.hidden = true; }
+  }
 
   // Student search: choosing a name fills in the class from the register
   var nameBox = document.getElementById('student_name');
@@ -79,7 +147,18 @@
     StudentPicker.attach({
       input: nameBox,
       data: students,
-      onSelect: function (item) { if (classBox) classBox.value = item.c || ''; }
+      onSelect: function (item) { if (classBox) classBox.value = item.c || ''; showWarn(item); },
+      onClear: function () { showWarn(null); }
+    });
+  }
+
+  // One press only: a double click must not send the form twice
+  var form = document.getElementById('soForm'), btn = document.getElementById('soBtn');
+  if (form && btn) {
+    form.addEventListener('submit', function () {
+      if (form.dataset.sent) return;
+      form.dataset.sent = '1';
+      setTimeout(function () { btn.disabled = true; }, 0);
     });
   }
 
