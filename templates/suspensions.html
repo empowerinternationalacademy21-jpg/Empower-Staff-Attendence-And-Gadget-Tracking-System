@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+{% block title %}Suspensions - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><i class="fas fa-user-lock"></i> Suspensions</h1>
+    <p class="sp-sub">
+      Students suspended by an admin cannot sign out a <strong>tablet</strong> or use their
+      <strong>personal gadget</strong> until the period ends. The block lifts by itself on the end date.
+    </p>
+  </div>
+  <a href="{{ url_for('suspension_new') }}" class="btn btn-danger"><i class="fas fa-user-lock"></i> Suspend a Student</a>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card stat-red">
+    <div class="stat-icon"><i class="fas fa-user-lock"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ active|length }}</span><span class="stat-label">Currently Suspended</span></div>
+  </div>
+  <div class="stat-card stat-green">
+    <div class="stat-icon"><i class="fas fa-history"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ total }}</span><span class="stat-label">Total Ever Recorded</span></div>
+  </div>
+</div>
+
+<section class="section">
+  <h2 class="section-title"><i class="fas fa-ban"></i> Currently suspended ({{ active|length }})</h2>
+  {% if active %}
+  <div class="card" style="overflow-x:auto">
+    <table class="data-table">
+      <thead>
+        <tr><th>Student</th><th>Reason</th><th>Period</th><th>Started</th><th>Can Sign Out Again</th>
+            <th>Time Left</th><th>Suspended By</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for s in active %}
+        <tr>
+          <td><strong>{{ s['name'] }}</strong>{% if s['class'] %}<div class="sp-muted">{{ s['class'] }}</div>{% endif %}</td>
+          <td class="sp-reason"><span class="badge badge-red">{{ s['category'] }}</span>
+            <div class="sp-muted">{{ s['reason']|truncate(90) }}</div></td>
+          <td>{{ s['weeks_label'] }}</td>
+          <td>{{ s['starts']|fmt_date }}</td>
+          <td><strong>{{ s['ends']|fmt_date }}</strong></td>
+          <td class="sp-left"><strong>{{ s['left'] }}</strong>
+            <div class="sp-bar" title="{{ s['progress'] }}% served"><span style="width: {{ s['progress'] }}%"></span></div></td>
+          <td class="sp-muted">{{ s['by'] }}</td>
+          <td><a class="btn btn-outline btn-sm" href="{{ url_for('suspension_view', sid=s['id']) }}">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state small">
+    <i class="fas fa-check-circle" style="color:var(--green)"></i>
+    <p>Nobody is suspended right now.</p>
+  </div>
+  {% endif %}
+</section>
+
+<section class="section">
+  <h2 class="section-title"><i class="fas fa-history"></i> Past suspensions (last 100)</h2>
+  {% if history %}
+  <div class="card" style="overflow-x:auto">
+    <table class="data-table">
+      <thead><tr><th>Student</th><th>Reason</th><th>Period</th><th>Started</th><th>Ended</th><th>Outcome</th><th>Suspended By</th><th></th></tr></thead>
+      <tbody>
+        {% for s in history %}
+        <tr>
+          <td><strong>{{ s['name'] }}</strong>{% if s['class'] %}<div class="sp-muted">{{ s['class'] }}</div>{% endif %}</td>
+          <td>{{ s['category'] }}</td>
+          <td>{{ s['weeks_label'] }}</td>
+          <td>{{ s['starts']|fmt_date }}</td>
+          <td>{{ (s['lifted_at'] if s['state'] == 'Lifted' else s['ends'])|fmt_date }}</td>
+          <td>{% if s['state'] == 'Lifted' %}<span class="badge badge-yellow">Lifted early</span>
+              {% else %}<span class="badge badge-green">Completed</span>{% endif %}</td>
+          <td class="sp-muted">{{ s['by'] }}</td>
+          <td><a class="btn btn-outline btn-sm" href="{{ url_for('suspension_view', sid=s['id']) }}">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state small"><p>No past suspensions yet.</p></div>
+  {% endif %}
+</section>
+
+<style>
+  .sp-sub { margin: .35rem 0 0; font-size: .88rem; color: var(--ink-light); max-width: 720px; line-height: 1.55; }
+  .sp-muted { font-size: .78rem; color: var(--ink-light); font-weight: 500; }
+  .sp-reason { min-width: 200px; max-width: 280px; }
+  .sp-left { min-width: 120px; }
+  .sp-bar { height: 6px; border-radius: 999px; background: rgba(13,27,62,.08); margin-top: .35rem; overflow: hidden; }
+  .sp-bar span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--warning), var(--green)); }
+</style>
+{% endblock %}
