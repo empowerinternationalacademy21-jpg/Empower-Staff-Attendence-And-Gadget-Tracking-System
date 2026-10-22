@@ -1,0 +1,106 @@
+{% extends 'base.html' %}
+{% block title %}Suspension Notice - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header no-print">
+  <h1><i class="fas fa-user-lock"></i> Suspension Record</h1>
+  <div style="display:flex; gap:.6rem; flex-wrap:wrap">
+    <button type="button" class="btn btn-outline" onclick="window.print()"><i class="fas fa-print"></i> Print notice</button>
+    <a href="{{ url_for('suspensions_page') }}" class="btn btn-outline"><i class="fas fa-arrow-left"></i> All suspensions</a>
+  </div>
+</div>
+
+<article class="card sv-notice">
+  <header class="sv-head">
+    <img src="{{ url_for('static', filename='logo.jpg') }}" alt="" class="sv-logo"/>
+    <div>
+      <div class="sv-school">Empower International Academy</div>
+      <h2>Notice of Suspension from Device Use</h2>
+    </div>
+    <span class="badge {{ 'badge-red' if s['state'] == 'Active' else ('badge-yellow' if s['state'] == 'Lifted' else 'badge-green') }} sv-status">
+      {{ 'Lifted early' if s['state'] == 'Lifted' else s['state'] }}
+    </span>
+  </header>
+
+  <dl class="sv-grid">
+    <div><dt>Student</dt><dd>{{ s['name'] }}</dd></div>
+    <div><dt>Class</dt><dd>{{ s['class'] or '—' }}</dd></div>
+    <div><dt>Applies to</dt><dd>School tablets and personal gadgets</dd></div>
+    <div><dt>Period</dt><dd>{{ s['weeks_label'] }}</dd></div>
+    <div><dt>Suspended from</dt><dd>{{ s['starts']|fmt_date }}</dd></div>
+    <div><dt>Can sign out again on</dt><dd>{{ s['ends']|fmt_date }}</dd></div>
+    <div><dt>Issued by</dt><dd>{{ s['by'] }}</dd></div>
+    <div><dt>Recorded</dt><dd>{{ s['created_at']|fmt_dt_full }}</dd></div>
+  </dl>
+
+  <section class="sv-block">
+    <h3>Reason</h3>
+    <p><span class="badge badge-red">{{ s['category'] }}</span></p>
+    <p class="sv-reason">{{ s['reason'] }}</p>
+  </section>
+
+  {% if s['state'] == 'Lifted' %}
+  <section class="sv-block">
+    <h3>Lifted early</h3>
+    <p>Lifted by <strong>{{ s['lifted_by'] }}</strong> on {{ s['lifted_at']|fmt_dt_full }}.
+       {% if s['lift_note'] %}<br/>Note: {{ s['lift_note'] }}{% endif %}</p>
+  </section>
+  {% elif s['state'] == 'Active' %}
+  <section class="sv-block no-print">
+    <h3>Time remaining</h3>
+    <p><strong>{{ s['left'] }}</strong> left</p>
+    <div class="sv-bar"><span style="width: {{ s['progress'] }}%"></span></div>
+  </section>
+  {% endif %}
+
+  <div class="sv-sign">
+    <div><span></span>Student</div>
+    <div><span></span>Parent / Guardian</div>
+    <div><span></span>Admin ({{ s['by'] }})</div>
+  </div>
+</article>
+
+{% if s['state'] == 'Active' %}
+<div class="card sv-lift no-print">
+  <h3><i class="fas fa-lock-open"></i> Lift this suspension early</h3>
+  <p>Use this only if the suspension was a mistake or has been resolved. It is recorded with your name.</p>
+  <form method="POST" action="{{ url_for('suspension_lift', sid=s['id']) }}"
+        onsubmit="return confirm('Lift this suspension? The student will be able to sign out devices straight away.');">
+    <div class="form-group">
+      <label for="note">Why is it being lifted? (optional)</label>
+      <input type="text" name="note" id="note" class="form-control" maxlength="300"/>
+    </div>
+    <button type="submit" class="btn btn-outline"><i class="fas fa-lock-open"></i> Lift suspension</button>
+  </form>
+</div>
+{% endif %}
+
+<style>
+  .sv-notice { max-width: 760px; margin: 0 auto 1.2rem; padding: 1.6rem; }
+  .sv-head { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; border-bottom: 2px solid var(--navy);
+             padding-bottom: 1rem; margin-bottom: 1.2rem; }
+  .sv-logo { width: 56px; height: 56px; object-fit: contain; border-radius: 8px; }
+  .sv-school { font-size: .75rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-light); }
+  .sv-head h2 { margin: .1rem 0 0; font-size: 1.2rem; color: var(--navy); }
+  .sv-status { margin-left: auto; }
+  .sv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .9rem 1.2rem; margin: 0 0 1.3rem; }
+  .sv-grid dt { font-size: .68rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-ghost); }
+  .sv-grid dd { margin: .15rem 0 0; font-weight: 700; color: var(--ink); }
+  .sv-block { margin-bottom: 1.2rem; }
+  .sv-block h3 { margin: 0 0 .4rem; font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-light); }
+  .sv-reason { white-space: pre-wrap; line-height: 1.6; margin: .4rem 0 0; color: var(--ink); }
+  .sv-bar { height: 8px; border-radius: 999px; background: rgba(13,27,62,.08); overflow: hidden; max-width: 360px; }
+  .sv-bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--warning), var(--green)); }
+  .sv-sign { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.2rem; margin-top: 2rem; font-size: .75rem; color: var(--ink-light); }
+  .sv-sign span { display: block; border-bottom: 1px solid var(--ink); height: 34px; margin-bottom: .3rem; }
+  .sv-lift { max-width: 760px; margin: 0 auto; padding: 1.3rem 1.6rem; }
+  .sv-lift h3 { margin: 0 0 .3rem; font-size: 1rem; color: var(--navy); }
+  .sv-lift p { margin: 0 0 1rem; font-size: .85rem; color: var(--ink-light); }
+  @media (max-width: 560px) { .sv-sign { grid-template-columns: 1fr; } .sv-notice { padding: 1rem; } }
+  @media print {
+    .navbar, .flash-container, .overdue-banner, .no-print { display: none !important; }
+    body { background: #fff !important; }
+    .sv-notice { box-shadow: none !important; border: none !important; max-width: none; padding: 0; }
+  }
+</style>
+{% endblock %}
