@@ -188,25 +188,117 @@ a { color: inherit; text-decoration: none; }
 /* ══════════════════════════════════════════════
    OVERDUE BANNER
 ══════════════════════════════════════════════ */
+/* The banner is a transparent holder that lines up with the page content.
+   The visible part is the frosted, softly tinted panel inside it (.ob-panel). */
 .overdue-banner {
-  background: linear-gradient(90deg, var(--danger), #c0223a);
-  color: var(--white);
-  padding: .7rem 2rem;
-  font-size: .86rem;
-  font-weight: 600;
-  letter-spacing: .2px;
-  display: flex;
-  align-items: center;
-  gap: .6rem;
-  border-bottom: 1px solid rgba(255,255,255,.1);
-  animation: urgentPulse 2.5s ease-in-out infinite;
+  display: block;
+  width: 100%;
+  max-width: 1280px;
+  margin: 1.1rem auto 0;
+  padding: 0 2rem;
+  background: transparent;
+  color: var(--ink);
 }
 
 .overdue-banner.hidden { display: none; }
 
-@keyframes urgentPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: .85; }
+.ob-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: rgba(214, 48, 65, .07);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  backdrop-filter: blur(10px) saturate(140%);
+  border: 1px solid rgba(214, 48, 65, .24);
+  border-left: 4px solid var(--danger);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(214, 48, 65, .08);
+  transition: background var(--duration) var(--ease), box-shadow var(--duration) var(--ease);
+}
+
+.overdue-banner[data-href]:hover .ob-panel {
+  background: rgba(214, 48, 65, .11);
+  box-shadow: 0 8px 28px rgba(214, 48, 65, .13);
+}
+
+.ob-badge {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(214, 48, 65, .12);
+  color: var(--danger);
+  font-size: .95rem;
+}
+
+.ob-body { flex: 1; min-width: 0; }
+
+.ob-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .6rem;
+  margin-bottom: .45rem;
+}
+
+.ob-title {
+  font-size: .95rem;
+  font-weight: 700;
+  color: #8b1020;
+  letter-spacing: .1px;
+}
+
+.ob-count {
+  min-width: 22px;
+  padding: 0 .5rem;
+  border-radius: 999px;
+  background: var(--danger);
+  color: var(--white);
+  font-size: .72rem;
+  font-weight: 800;
+  line-height: 22px;
+  text-align: center;
+}
+
+.ob-cta {
+  margin-left: auto;
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--navy);
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  white-space: nowrap;
+}
+
+.ob-list { list-style: none; display: grid; gap: .1rem; }
+
+.ob-list li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .2rem .7rem;
+  padding: .32rem 0;
+  font-size: .85rem;
+  color: var(--ink-mid);
+  border-top: 1px solid rgba(214, 48, 65, .12);
+}
+
+.ob-list li:first-child { border-top: none; }
+.ob-list li i { color: var(--danger); font-size: .8rem; width: 16px; text-align: center; }
+.ob-list li strong { color: var(--ink); font-weight: 700; }
+.ob-meta { color: var(--ink-light); font-size: .8rem; }
+.ob-due { margin-left: auto; font-size: .78rem; font-weight: 700; color: #8b1020; white-space: nowrap; }
+.ob-more { margin-top: .35rem; font-size: .78rem; font-weight: 600; color: var(--ink-light); }
+
+@media (max-width: 760px) {
+  .overdue-banner { padding: 0 1rem; margin-top: .8rem; }
+  .ob-cta { margin-left: 0; width: 100%; }
+  .ob-due { margin-left: 0; }
 }
 
 /* ══════════════════════════════════════════════
@@ -1265,34 +1357,43 @@ select.form-control {
 /* ══════════════════════════════════════════════
    OVERDUE LIST (Dashboard)
 ══════════════════════════════════════════════ */
+/* Same frosted, softly tinted container as the overdue banner */
 .overdue-list {
-  background: var(--danger-subtle);
-  border: 1px solid rgba(214,48,65,.2);
+  display: block;
+  background: rgba(214, 48, 65, .06);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  backdrop-filter: blur(10px) saturate(140%);
+  border: 1px solid rgba(214, 48, 65, .22);
+  border-left: 4px solid var(--danger);
   border-radius: var(--radius);
-  padding: 1.2rem 1.5rem;
+  box-shadow: 0 6px 24px rgba(214, 48, 65, .07);
+  padding: 1.1rem 1.4rem;
   margin-top: 1.2rem;
 }
 
 .overdue-list h4 {
-  font-size: .9rem;
+  font-size: .92rem;
   font-weight: 700;
   color: #8b1020;
-  margin-bottom: .8rem;
+  margin-bottom: .6rem;
   display: flex;
   align-items: center;
   gap: .5rem;
 }
 
+.overdue-list h4 i { color: var(--danger); }
+
 .overdue-item {
-  padding: .6rem 0;
-  border-bottom: 1px solid rgba(214,48,65,.12);
+  padding: .55rem 0;
+  border-bottom: 1px solid rgba(214, 48, 65, .12);
   font-size: .875rem;
-  color: #6b0e1a;
+  color: var(--ink-mid);
   display: flex;
   align-items: center;
   gap: .6rem;
 }
 
+.overdue-item strong { color: var(--ink); }
 .overdue-item:last-child { border-bottom: none; padding-bottom: 0; }
 .overdue-item i { color: var(--danger); font-size: .85rem; }
 
