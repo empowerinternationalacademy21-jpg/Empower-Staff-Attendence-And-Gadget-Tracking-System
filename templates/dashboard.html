@@ -45,7 +45,7 @@
   <div id="gadget-overdue-live">
   {% if overdue_gadgets %}
   <div class="alert alert-danger overdue-list">
-    <h4><i class="fas fa-bell"></i> Overdue Gadgets!</h4>
+    <h4><i class="fas fa-bell"></i> Overdue Gadgets</h4>
     {% for t in overdue_gadgets %}
     <div class="overdue-item">
       <i class="fas fa-laptop"></i>
@@ -101,7 +101,7 @@
   <div id="overdue-live">
   {% if overdue_tablets %}
   <div class="alert alert-danger overdue-list">
-    <h4><i class="fas fa-bell"></i> Overdue Tablets!</h4>
+    <h4><i class="fas fa-bell"></i> Overdue Tablets</h4>
     {% for tx in overdue_tablets %}
     <div class="overdue-item">
       <i class="fas fa-tablet-alt"></i>
@@ -526,7 +526,7 @@
     if (!box) return;
     if (!list.length) { box.innerHTML = ''; return; }
     var html = '<div class="alert alert-danger overdue-list">' +
-      '<h4><i class="fas fa-bell"></i> Overdue Tablets!</h4>';
+      '<h4><i class="fas fa-bell"></i> Overdue Tablets</h4>';
     list.forEach(function (t) {
       html += '<div class="overdue-item"><i class="fas fa-tablet-alt"></i> ' +
         '<strong>' + esc(t.tablet) + '</strong> \u2014 Borrowed by <strong>' + esc(t.student) +
@@ -548,7 +548,7 @@
     if (box) {
       if (!d.gadget_overdue.length) { box.innerHTML = ''; }
       else {
-        var html = '<div class="alert alert-danger overdue-list"><h4><i class="fas fa-bell"></i> Overdue Gadgets!</h4>';
+        var html = '<div class="alert alert-danger overdue-list"><h4><i class="fas fa-bell"></i> Overdue Gadgets</h4>';
         d.gadget_overdue.forEach(function (t) {
           html += '<div class="overdue-item"><i class="fas fa-laptop"></i> <strong>' + esc(t.student) + '</strong> (' +
             esc(t['class']) + ') \u2014 slot ' + esc(t.slot) + ' \u2014 was due ' + esc(t.expected) +
