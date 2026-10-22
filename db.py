@@ -298,6 +298,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_blacklist_source ON blacklist(source, sour
 CREATE INDEX IF NOT EXISTS idx_blacklist_person ON blacklist(person_key, blocked_until);
 
 CREATE INDEX IF NOT EXISTS idx_tablet_tx_signout ON tablet_transactions(sign_out_time);
+
+CREATE TABLE IF NOT EXISTS suspensions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_keys TEXT NOT NULL,
+    student_name TEXT NOT NULL,
+    class_name TEXT DEFAULT '',
+    category TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    weeks INTEGER NOT NULL,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'Active',
+    created_by TEXT NOT NULL,
+    lifted_by TEXT,
+    lifted_at TEXT,
+    lift_note TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_suspensions_status ON suspensions(status, ends_at);
 """
 
 
