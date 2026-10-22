@@ -115,6 +115,8 @@ ACTION_META = {
     'laptop_blocked':  ('Gadget sign-out blocked', 'fa-ban',        'a-red'),
     'tablet_blocked':  ('Tablet sign-out blocked', 'fa-ban',        'a-red'),
     'blacklisted':     ('Added to blacklist',    'fa-user-slash',   'a-red'),
+    'suspended':       ('Suspended student',     'fa-user-lock',    'a-red'),
+    'suspension_lifted': ('Lifted suspension',   'fa-lock-open',    'a-teal'),
     # kept only so older log entries still display properly
     'staff_add':       ('Added staff',           'fa-user-plus',    'a-green'),
     'staff_edit':      ('Edited staff',          'fa-user-edit',    'a-blue'),
@@ -476,6 +478,22 @@ def signout_barrier(conn, name, cls):
     Returns a dict for the screen: title, message and a few detail rows."""
     key, who = person_key(name, cls), _who(name, cls)
 
+    sus = active_suspension(conn, key)
+    if sus:
+        return {
+            'title': 'Sign-out denied: student is suspended',
+            'message': (f"{who} is suspended from using tablets and personal gadgets until "
+                        f"{fmt_date(sus['ends_at'])}. Reason: {sus['category']}."),
+            'details': [
+                ('Student', who),
+                ('Reason', sus['category']),
+                ('Suspended since', fmt_date(sus['starts_at'])),
+                ('Period', _weeks_label(sus['weeks'])),
+                ('Can sign out again', fmt_date(sus['ends_at'])),
+                ('Suspended by', sus['created_by']),
+            ],
+        }
+
     row = active_blacklist(conn, key)
     if row:
         device = f" ({row['device']})" if row['device'] else ''
@@ -554,6 +572,8 @@ def student_flags(conn):
             "SELECT person_key, blocked_until FROM blacklist WHERE blocked_until > ?",
             (now_iso,)).fetchall():
         flags[r['person_key']] = ('BLACKLISTED', f"Suspended until {fmt_dt_full(r['blocked_until'])}")
+    for key, r in suspension_map(conn).items():      # a formal suspension wins over everything
+        flags[key] = ('SUSPENDED', f"Suspended until {fmt_date(r['ends_at'])}")
     return flags
 
 
@@ -603,6 +623,232 @@ def blacklist_page():
                            active=[_blacklist_row(r) for r in active],
                            history=[_blacklist_row(r) for r in history],
                            total=total, grace=LATE_GRACE_MINUTES, days=BLACKLIST_DAYS)
+
+
+# ─────────────────────────────────────────────
+# SUSPENSIONS
+# An admin formally suspends a student (picked from the school registers) for a number of
+# weeks. Until the period ends the student cannot sign out ANY tablet or personal gadget.
+# Every admin sees it (Suspensions page, search lists, gadget desk, activity log) and the
+# server enforces it in signout_barrier(), so it applies to both kinds of device.
+# The block ends by itself when the date passes; an admin can also lift it early.
+# ─────────────────────────────────────────────
+
+SUSPENSION_REASONS = [
+    'Misuse of a tablet or gadget',
+    'Damage to a tablet or gadget',
+    'Inappropriate content or use',
+    'Breaking school or device rules',
+    'Repeated late returns',
+    'Tampering with settings or security',
+    'Other',
+]
+SUSPENSION_WEEKS = [1, 2, 3, 4, 6, 8, 10, 12]
+MAX_SUSPENSION_WEEKS = 52
+
+
+def _weeks_label(weeks):
+    weeks = int(weeks or 0)
+    return f"{weeks} week{'' if weeks == 1 else 's'}"
+
+
+def suspension_map(conn):
+    """{person_key: suspension row} for every suspension that is in force right now."""
+    now_iso = datetime.utcnow().isoformat()
+    out = {}
+    for r in conn.execute(
+            "SELECT * FROM suspensions WHERE status='Active' AND ends_at > ? "
+            "ORDER BY ends_at", (now_iso,)).fetchall():
+        for key in (r['person_keys'] or '').split():
+            out[key] = r                      # the longest one wins (ordered by end date)
+    return out
+
+
+def active_suspension(conn, key):
+    """The suspension that currently blocks this student, or None."""
+    return suspension_map(conn).get(key)
+
+
+def suspension_short(row):
+    return (f"{_who(row['student_name'], row['class_name'])} is suspended from using tablets and "
+            f"personal gadgets until {fmt_date(row['ends_at'])} ({row['category']}).")
+
+
+def _carry_suspension(conn, kind, name, old_class, new_class):
+    """A student moved class (promotion / undo): keep their suspension attached to them.
+    If the same student is still listed in the OTHER register under the old class, the
+    old identity stays valid too, so the suspension cannot be dodged through that list."""
+    old_key, new_key = person_key(name, old_class), person_key(name, new_class)
+    if old_key == new_key:
+        return
+    other = 'laptop_students' if kind == 'students' else 'students'
+    still = conn.execute(
+        f"SELECT 1 FROM {other} WHERE is_active=1 AND full_name = ? COLLATE NOCASE "
+        f"AND class_name = ? COLLATE NOCASE", (name, old_class or '')).fetchone()
+    for r in conn.execute("SELECT id, person_keys FROM suspensions WHERE status='Active'").fetchall():
+        keys = (r['person_keys'] or '').split()
+        if old_key not in keys:
+            continue
+        keys = [k for k in keys if k != old_key or still]
+        if new_key not in keys:
+            keys.append(new_key)
+        conn.execute("UPDATE suspensions SET person_keys=?, class_name=? WHERE id=?",
+                     (' '.join(keys), new_class or '', r['id']))
+
+
+def suspendable_students(conn):
+    """Every active student in either register, once each, for the picker on the form."""
+    seen = {}
+    for table, label in (('students', 'School register'),
+                         ('laptop_students', 'Personal gadget student')):
+        for r in conn.execute(
+                f"SELECT full_name, class_name FROM {table} WHERE is_active=1 "
+                f"ORDER BY full_name COLLATE NOCASE").fetchall():
+            key = person_key(r['full_name'], r['class_name'])
+            if key in seen:
+                if label.startswith('Personal'):
+                    seen[key]['sub'] = 'School register · personal gadget student'
+                continue
+            seen[key] = {'n': r['full_name'], 'c': r['class_name'] or '', 'k': key, 'sub': label}
+    return list(seen.values())
+
+
+def _suspension_row(r):
+    now = local_now()
+    start, end = to_local(r['starts_at']), to_local(r['ends_at'])
+    if r['status'] == 'Lifted':
+        state = 'Lifted'
+    elif r['ends_at'] <= datetime.utcnow().isoformat():
+        state = 'Completed'
+    else:
+        state = 'Active'
+    span = max((end - start).total_seconds(), 1)
+    done = min(max((now - start).total_seconds() / span, 0), 1)
+    return {
+        'id': r['id'], 'name': r['student_name'], 'class': r['class_name'] or '',
+        'category': r['category'], 'reason': r['reason'], 'weeks': r['weeks'],
+        'weeks_label': _weeks_label(r['weeks']),
+        'starts': r['starts_at'], 'ends': r['ends_at'], 'by': r['created_by'],
+        'state': state, 'left': _time_left(r['ends_at']) if state == 'Active' else '',
+        'progress': int(done * 100) if state == 'Active' else 100,
+        'lifted_by': r['lifted_by'] or '', 'lifted_at': r['lifted_at'],
+        'lift_note': r['lift_note'] or '', 'created_at': r['created_at'],
+    }
+
+
+@app.route('/suspensions')
+@login_required
+def suspensions_page():
+    """Every admin can see who is suspended, why, by whom and until when."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM suspensions ORDER BY ends_at DESC").fetchall()
+    items = [_suspension_row(r) for r in rows]
+    active = sorted((i for i in items if i['state'] == 'Active'), key=lambda i: i['ends'])
+    history = [i for i in items if i['state'] != 'Active'][:100]
+    return render_template('suspensions.html', active=active, history=history, total=len(items))
+
+
+@app.route('/suspensions/new', methods=['GET', 'POST'])
+@login_required
+def suspension_new():
+    admin = current_admin()
+    form = request.form if request.method == 'POST' else {}
+    error = None
+    with get_db() as conn:
+        students = suspendable_students(conn)
+        current = suspension_map(conn)
+        if request.method == 'POST':
+            by_key = {s['k']: s for s in students}
+            student = by_key.get((request.form.get('student_key') or '').strip())
+            category = (request.form.get('category') or '').strip()
+            reason = re.sub(r'[ \t]+', ' ', (request.form.get('reason') or '').strip())
+            period = (request.form.get('period') or '').strip()
+            raw_weeks = request.form.get('custom_weeks') if period == 'custom' else period
+            try:
+                weeks = int(raw_weeks)
+            except (TypeError, ValueError):
+                weeks = 0
+
+            if not student:
+                error = 'Choose the student from the list that appears as you type.'
+            elif category not in SUSPENSION_REASONS:
+                error = 'Choose a reason category.'
+            elif len(reason) < 10:
+                error = 'Describe what happened (at least a short sentence) so other admins understand.'
+            elif len(reason) > 1000:
+                error = 'The description is too long (1000 characters at most).'
+            elif not 1 <= weeks <= MAX_SUSPENSION_WEEKS:
+                error = f'Choose a suspension period between 1 and {MAX_SUSPENSION_WEEKS} weeks.'
+            elif not request.form.get('confirm'):
+                error = 'Please tick the box to confirm the suspension.'
+            elif student['k'] in current:
+                error = (f"{_who(student['n'], student['c'])} is already suspended until "
+                         f"{fmt_date(current[student['k']]['ends_at'])}.")
+
+            if not error:
+                now_local = local_now()
+                # the student may sign out again on the morning of the end date
+                end_day = datetime.combine(now_local.date() + timedelta(weeks=weeks),
+                                           datetime.min.time(), tzinfo=APP_TZ)
+                res = conn.execute("""
+                    INSERT INTO suspensions (person_keys, student_name, class_name, category,
+                        reason, weeks, starts_at, ends_at, status, created_by)
+                    VALUES (?,?,?,?,?,?,?,?,'Active',?)
+                """, (student['k'], student['n'], student['c'], category, reason, weeks,
+                      to_utc_iso(now_local), to_utc_iso(end_day), admin))
+                sid = res.lastrowid
+                log_activity('suspended',
+                             f"{_who(student['n'], student['c'])} suspended for {_weeks_label(weeks)} "
+                             f"until {fmt_date(to_utc_iso(end_day))} — {category}")
+                flash(f"{student['n']} is suspended for {_weeks_label(weeks)}. They cannot sign out "
+                      f"a tablet or personal gadget until {fmt_date(to_utc_iso(end_day))}.", 'success')
+                return redirect(url_for('suspension_view', sid=sid))
+
+    picker = []
+    for s in students:
+        item = dict(s)
+        if s['k'] in current:
+            item['tag'] = 'SUSPENDED'
+            item['sub'] = f"Already suspended until {fmt_date(current[s['k']]['ends_at'])}"
+        picker.append(item)
+    return render_template('suspension_new.html', students=picker, admin=admin, form=form,
+                           error=error, reasons=SUSPENSION_REASONS, weeks_options=SUSPENSION_WEEKS,
+                           max_weeks=MAX_SUSPENSION_WEEKS, today_iso=local_today().isoformat())
+
+
+@app.route('/suspensions/<int:sid>')
+@login_required
+def suspension_view(sid):
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM suspensions WHERE id=?", (sid,)).fetchone()
+    if not row:
+        flash('That suspension record was not found.', 'danger')
+        return redirect(url_for('suspensions_page'))
+    return render_template('suspension_view.html', s=_suspension_row(row))
+
+
+@app.route('/suspensions/<int:sid>/lift', methods=['POST'])
+@login_required
+def suspension_lift(sid):
+    admin = current_admin()
+    note = (request.form.get('note') or '').strip()[:300]
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM suspensions WHERE id=?", (sid,)).fetchone()
+        if not row:
+            flash('That suspension record was not found.', 'danger')
+            return redirect(url_for('suspensions_page'))
+        res = conn.execute(
+            "UPDATE suspensions SET status='Lifted', lifted_by=?, lifted_at=?, lift_note=? "
+            "WHERE id=? AND status='Active' AND ends_at > ?",
+            (admin, datetime.utcnow().isoformat(), note, sid, datetime.utcnow().isoformat()))
+        if not res.rowcount:
+            flash('That suspension has already ended.', 'info')
+            return redirect(url_for('suspension_view', sid=sid))
+    log_activity('suspension_lifted',
+                 f"Lifted the suspension of {_who(row['student_name'], row['class_name'])} early"
+                 + (f" — {note}" if note else ''))
+    flash(f"Suspension lifted. {row['student_name']} can sign out devices again.", 'success')
+    return redirect(url_for('suspensions_page'))
 
 
 # ─────────────────────────────────────────────
@@ -1995,6 +2241,9 @@ def _apply_class_moves(conn, kind, moves, admin, log=True):
                               (target, *part)))
         for i in range(0, len(stmts), IMPORT_BATCH):
             conn.run_batch(stmts[i:i + IMPORT_BATCH])
+    for wave in waves:
+        for m in wave:
+            _carry_suspension(conn, kind, m['name'], m['old'], m['new'])
     if leaves:
         ids = [m['id'] for m in leaves]
         stmts = [(f"UPDATE {table} SET is_active=0 WHERE id IN ({','.join('?' * len(ids[i:i + PROMOTE_CHUNK]))})",
@@ -2413,6 +2662,7 @@ def gadget_desk():
         banned_rows = conn.execute(
             "SELECT * FROM blacklist WHERE blocked_until > ? ORDER BY blocked_until",
             (now_utc,)).fetchall()
+        suspended = suspension_map(conn)
     banned = {r['person_key']: r for r in banned_rows}
 
     slots_by = {}
@@ -2425,16 +2675,19 @@ def gadget_desk():
         slots = slots_by.get(st['id'], [])
         verdict = check_gadget_access(st['full_name'], slots, bool(st['consent_at']),
                                       st['id'] in out_ids, now_local)
-        ban = banned.get(person_key(st['full_name'], st['class_name']))
+        pkey = person_key(st['full_name'], st['class_name'])
+        ban = banned.get(pkey)
+        sus = suspended.get(pkey)
         people.append({
             'id': st['id'], 'n': st['full_name'], 'c': st['class_name'] or '',
             'gadget': _gadget_device(st), 'type': _gadget_type(st),
             'consent': bool(st['consent_at']),
             'out': st['id'] in out_ids,
-            'blocked': blacklist_short(ban) if ban else '',
+            'blocked': suspension_short(sus) if sus else (blacklist_short(ban) if ban else ''),
+            'suspended': bool(sus),
             'slots': [[int(s['weekday']), s['start_time'], s['end_time']] for s in slots],
         })
-        if verdict['ok'] and not ban:
+        if verdict['ok'] and not ban and not sus:
             allowed_now.append({'id': st['id'], 'n': st['full_name'], 'c': st['class_name'] or '',
                                 'until': fmt12(verdict['slot']['end_time'])})
 
@@ -3132,6 +3385,16 @@ def fmt_dt_full(value):
         return '—'
     try:
         return to_local(value).strftime('%a %d %b %Y, %I:%M %p')
+    except Exception:
+        return value
+
+
+@app.template_filter('fmt_date')
+def fmt_date(value):
+    if not value:
+        return '—'
+    try:
+        return to_local(value).strftime('%a %d %b %Y')
     except Exception:
         return value
 
