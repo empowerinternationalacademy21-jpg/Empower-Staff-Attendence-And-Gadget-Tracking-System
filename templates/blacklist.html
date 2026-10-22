@@ -1,0 +1,132 @@
+{% extends 'base.html' %}
+{% block title %}Blacklist - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><i class="fas fa-user-slash"></i> Blacklist</h1>
+    <p class="bl-sub">
+      A student who returns a tablet or personal gadget more than <strong>{{ grace }} minutes</strong> late
+      is added here automatically and cannot sign anything out for <strong>{{ days }} days</strong>.
+      After that, sign-out is restored without any action from an admin.
+    </p>
+  </div>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card stat-red">
+    <div class="stat-icon"><i class="fas fa-user-slash"></i></div>
+    <div class="stat-info">
+      <span class="stat-number">{{ active|length }}</span>
+      <span class="stat-label">Currently Blocked</span>
+    </div>
+  </div>
+  <div class="stat-card stat-yellow">
+    <div class="stat-icon"><i class="fas fa-tablet-alt"></i></div>
+    <div class="stat-info">
+      <span class="stat-number">{{ active|selectattr('kind', 'equalto', 'Tablet')|list|length }}</span>
+      <span class="stat-label">Late Tablet Returns</span>
+    </div>
+  </div>
+  <div class="stat-card stat-blue">
+    <div class="stat-icon"><i class="fas fa-laptop"></i></div>
+    <div class="stat-info">
+      <span class="stat-number">{{ active|selectattr('kind', 'equalto', 'Gadget')|list|length }}</span>
+      <span class="stat-label">Late Gadget Returns</span>
+    </div>
+  </div>
+  <div class="stat-card stat-green">
+    <div class="stat-icon"><i class="fas fa-history"></i></div>
+    <div class="stat-info">
+      <span class="stat-number">{{ total }}</span>
+      <span class="stat-label">Total Ever Recorded</span>
+    </div>
+  </div>
+</div>
+
+<!-- CURRENTLY BLOCKED -->
+<section class="section">
+  <h2 class="section-title"><i class="fas fa-ban"></i> Currently blocked ({{ active|length }})</h2>
+  {% if active %}
+  <div class="card" style="overflow-x:auto">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Student</th><th>Item</th><th>Was Due</th><th>Returned</th>
+          <th>Late By</th><th>Can Sign Out Again</th><th>Time Left</th><th>Recorded By</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in active %}
+        <tr>
+          <td><strong>{{ b['name'] }}</strong>{% if b['class'] %}<div class="bl-muted">{{ b['class'] }}</div>{% endif %}</td>
+          <td>
+            <span class="badge {{ 'badge-blue' if b['kind'] == 'Tablet' else 'badge-yellow' }}">{{ b['kind'] }}</span>
+            {% if b['device'] %}<div class="bl-muted">{{ b['device'] }}</div>{% endif %}
+          </td>
+          <td>{{ b['due']|fmt_dt }}</td>
+          <td>{{ b['returned']|fmt_dt }}</td>
+          <td><span class="badge badge-red">{{ b['late']|fmt_minutes }}</span></td>
+          <td>{{ b['until']|fmt_dt_full }}</td>
+          <td class="bl-left">
+            <strong>{{ b['left'] }}</strong>
+            <div class="bl-bar" title="{{ b['progress'] }}% of the suspension served"><span style="width: {{ b['progress'] }}%"></span></div>
+          </td>
+          <td class="bl-muted">{{ b['by'] or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state small">
+    <i class="fas fa-check-circle" style="color:var(--green)"></i>
+    <p>Nobody is blacklisted. Everyone can sign out.</p>
+  </div>
+  {% endif %}
+</section>
+
+<!-- PAST -->
+<section class="section">
+  <h2 class="section-title"><i class="fas fa-history"></i> Past entries (last 100)</h2>
+  {% if history %}
+  <div class="card" style="overflow-x:auto">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Student</th><th>Item</th><th>Was Due</th><th>Returned</th>
+          <th>Late By</th><th>Blocked Until</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in history %}
+        <tr>
+          <td><strong>{{ b['name'] }}</strong>{% if b['class'] %}<div class="bl-muted">{{ b['class'] }}</div>{% endif %}</td>
+          <td>
+            <span class="badge {{ 'badge-blue' if b['kind'] == 'Tablet' else 'badge-yellow' }}">{{ b['kind'] }}</span>
+            {% if b['device'] %}<div class="bl-muted">{{ b['device'] }}</div>{% endif %}
+          </td>
+          <td>{{ b['due']|fmt_dt }}</td>
+          <td>{{ b['returned']|fmt_dt }}</td>
+          <td>{{ b['late']|fmt_minutes }}</td>
+          <td>{{ b['until']|fmt_dt_full }}</td>
+          <td><span class="badge badge-green">Restored</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state small"><p>No past entries yet.</p></div>
+  {% endif %}
+</section>
+
+<style>
+  .bl-sub { margin: .35rem 0 0; font-size: .88rem; color: var(--ink-light); max-width: 720px; line-height: 1.55; }
+  .bl-muted { font-size: .78rem; color: var(--ink-light); font-weight: 500; }
+  .bl-left { min-width: 130px; }
+  .bl-bar { height: 6px; border-radius: 999px; background: rgba(13,27,62,.08); margin-top: .35rem; overflow: hidden; }
+  .bl-bar span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--warning), var(--green)); }
+</style>
+
+{% endblock %}
