@@ -46,21 +46,64 @@ if (overdueBanner) {
   });
 }
 
+// small helper: <tag class="cls">text</tag> (text goes in as plain text, never as HTML)
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = text;
+  return node;
+}
+
+const BANNER_MAX_ROWS = 3;     // longer lists are summarised as "+ N more"
+
 function renderBanner(tablets, gadgets) {
-  if (!tablets.length && !gadgets.length) {
+  const total = tablets.length + gadgets.length;
+  if (!total) {
     overdueBanner.classList.add('hidden');
     overdueBanner.textContent = '';
     return;
   }
-  const lines = tablets.map(t =>
-      `⚠️ ${t.tablet} overdue — Borrowed by ${t.student} (Expected: ${t.expected})`)
-    .concat(gadgets.map(t =>
-      `💻 ${t.student} (${t['class']}) gadget overdue — was due ${t.expected}`));
+
+  const rows = tablets.map(t => ({
+      icon: 'fa-tablet-alt', who: t.student,
+      meta: [t.tablet, t['class']].filter(Boolean).join(' · '), due: t.expected }))
+    .concat(gadgets.map(g => ({
+      icon: 'fa-laptop', who: g.student,
+      meta: ['Personal gadget', g['class']].filter(Boolean).join(' · '), due: g.expected })));
+
+  const panel = el('div', 'ob-panel');
+  panel.setAttribute('role', 'alert');
+
+  const badge = el('div', 'ob-badge');
+  badge.appendChild(el('i', 'fas fa-bell'));
+
+  const body = el('div', 'ob-body');
+  const head = el('div', 'ob-head');
+  head.appendChild(el('span', 'ob-title', total === 1 ? 'Overdue return' : 'Overdue returns'));
+  head.appendChild(el('span', 'ob-count', String(total)));
+  const cta = el('span', 'ob-cta', 'View details ');
+  cta.appendChild(el('i', 'fas fa-arrow-right'));
+  head.appendChild(cta);
+  body.appendChild(head);
+
+  const list = el('ul', 'ob-list');
+  rows.slice(0, BANNER_MAX_ROWS).forEach(r => {
+    const li = el('li');
+    li.appendChild(el('i', 'fas ' + r.icon));
+    li.appendChild(el('strong', '', r.who));
+    if (r.meta) li.appendChild(el('span', 'ob-meta', r.meta));
+    li.appendChild(el('span', 'ob-due', 'Due ' + r.due));
+    list.appendChild(li);
+  });
+  body.appendChild(list);
+  if (rows.length > BANNER_MAX_ROWS) {
+    body.appendChild(el('div', 'ob-more', '+ ' + (rows.length - BANNER_MAX_ROWS) + ' more overdue'));
+  }
+
+  panel.appendChild(badge);
+  panel.appendChild(body);
   overdueBanner.textContent = '';
-  const icon = document.createElement('i');
-  icon.className = 'fas fa-bell';
-  overdueBanner.appendChild(icon);
-  overdueBanner.appendChild(document.createTextNode('\u00A0\u00A0' + lines.join('   |   ')));
+  overdueBanner.appendChild(panel);
   overdueBanner.classList.remove('hidden');
   bannerTarget = tablets.length ? overdueBanner.dataset.href
                                 : (overdueBanner.dataset.hrefGadgets || overdueBanner.dataset.href);
