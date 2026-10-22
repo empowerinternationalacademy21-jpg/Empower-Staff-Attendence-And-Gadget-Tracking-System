@@ -134,7 +134,7 @@
       var ic = document.createElement('i'); ic.className = 'fas fa-exclamation-triangle';
       warn.appendChild(ic);
       warn.appendChild(document.createTextNode(
-        (item.tag === 'BLACKLISTED' ? 'Blacklisted. ' : 'Already borrowed today. ') + (item.sub || '') +
+        (item.tag === 'SUSPENDED' ? 'Suspended. ' : item.tag === 'BLACKLISTED' ? 'Blacklisted. ' : 'Already borrowed today. ') + (item.sub || '') +
         '. Sign-out will be denied.'));
       warn.hidden = false;
     } else { warn.hidden = true; }
