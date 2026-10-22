@@ -34,8 +34,29 @@ Empower International Academy.
 | `/gadgets/overdue` | Admin | Overdue gadgets (live) |
 | `/gadgets/students` · `/gadgets/students/promote` | Admin | Gadget students register (choose Laptop or Tablet; add / remove / PDF upload) and class promotion |
 | `/gadgets/students/<id>/timetable` | Admin | Edit a student's timetable, attach their timetable PDF, type or read intervals, and record their consent |
+| `/blacklist` | Admin | Students blocked for returning a tablet or gadget more than 20 minutes late |
 | `/activity` | Admin | Team activity log |
 | `/api/tablet-status` | Admin API | Live numbers polled by the pages every 10 seconds |
+
+## Fair-use rules (enforced by the server)
+
+1. **One tablet per student per school day.** If an admin tries to sign a tablet out to a student who
+   has already had one today (even if it was returned), the sign-out is denied with a clear notice,
+   nothing is issued, and the attempt is written to the activity log. The student can borrow again
+   the next school day (the day follows the school's time zone, so it resets at local midnight).
+2. **Blacklist.** A tablet or personal gadget returned **more than 20 minutes after it was due**
+   puts the student on the **Blacklist** page automatically. For **4 days** from the moment it was
+   signed back in, the student cannot sign out a tablet *or* a gadget. When the 4 days have passed
+   the block lifts by itself and the entry moves to *Past entries*.
+3. A student who is still holding a tablet or gadget that is more than 20 minutes overdue cannot
+   take another one until it is returned.
+
+Students are matched by **name + class**, ignoring capital letters, extra spaces and punctuation
+(`Mukasa  Grace / P.5` is the same person as `mukasa grace / P5`). Two different students with the
+same name in different classes are different people. Only returns made after this feature was
+added are counted. Search lists on the sign-out pages tag blacklisted students so admins see it
+before pressing the button. The two numbers can be changed with the optional environment variables
+`BLACKLIST_LATE_MINUTES` (default 20) and `BLACKLIST_DAYS` (default 4).
 
 ## Promoting students to the next class
 
@@ -111,6 +132,7 @@ matching `/gadgets` page.
 `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SECRET_KEY` — required.
 `APP_TIMEZONE` — optional (default `Africa/Kampala`).
 `ADMIN_USERNAME` / `ADMIN_PASSWORD` — optional emergency login.
+`BLACKLIST_LATE_MINUTES` / `BLACKLIST_DAYS` — optional (defaults 20 and 4), see Fair-use rules.
 
 Admin accounts are stored (hashed) in the Turso `admins` table.
 
