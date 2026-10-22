@@ -34,6 +34,7 @@ Empower International Academy.
 | `/gadgets/overdue` | Admin | Overdue gadgets (live) |
 | `/gadgets/students` · `/gadgets/students/promote` | Admin | Gadget students register (choose Laptop or Tablet; add / remove / PDF upload) and class promotion |
 | `/gadgets/students/<id>/timetable` | Admin | Edit a student's timetable, attach their timetable PDF, type or read intervals, and record their consent |
+| `/suspensions` · `/suspensions/new` · `/suspensions/<id>` | Admin | **Suspensions** — an admin picks a student from the registers, chooses a reason and a period (1–12 weeks or custom); the student cannot sign out a tablet or use a personal gadget until it ends. Visible to every admin; printable notice; can be lifted early |
 | `/blacklist` | Admin | Students blocked for returning a tablet or gadget more than 20 minutes late |
 | `/activity` | Admin | Team activity log |
 | `/api/tablet-status` | Admin API | Live numbers polled by the pages every 10 seconds |
@@ -50,6 +51,10 @@ Empower International Academy.
    the block lifts by itself and the entry moves to *Past entries*.
 3. A student who is still holding a tablet or gadget that is more than 20 minutes overdue cannot
    take another one until it is returned.
+4. **Suspension.** An admin can formally suspend a student for a chosen number of weeks. The block covers
+   *both* tablets and personal gadgets, is enforced by the server on every sign-out, shows as
+   **SUSPENDED** in the search lists and on the Gadget Desk, and ends by itself on the morning of the end
+   date. It follows the student through class promotions. Returning a device already out is never blocked.
 
 Students are matched by **name + class**, ignoring capital letters, extra spaces and punctuation
 (`Mukasa  Grace / P.5` is the same person as `mukasa grace / P5`). Two different students with the
