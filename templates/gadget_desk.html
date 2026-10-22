@@ -206,6 +206,7 @@
   // same rules as the server (the server is the one that actually enforces them)
   function check(p) {
     var now = schoolNow();
+    if (p.blocked) return { ok: false, msg: p.blocked };
     if (p.out) return { ok: false, msg: p.n + ' already has a gadget signed out.' };
     if (!p.slots.length) return { ok: false, msg: p.n + ' has no timetable yet. Create one first.' };
     if (!p.consent) return { ok: false, msg: p.n + "'s timetable has not been agreed yet. Record the student's consent on the timetable page first." };
@@ -247,7 +248,11 @@
 
   function clearPerson() { current = null; $('ldPanel').hidden = true; $('ldStudentId').value = ''; $('ldBtn').disabled = true; }
 
-  var data = PEOPLE.map(function (p) { p.sub = p.gadget; if (p.out) p.tag = 'OUT'; return p; });
+  var data = PEOPLE.map(function (p) {
+    p.sub = p.gadget;
+    if (p.blocked) p.tag = 'BLACKLISTED'; else if (p.out) p.tag = 'OUT';
+    return p;
+  });
   var picker = window.StudentPicker && StudentPicker.attach({
     input: $('ldStudent'), data: data, onSelect: showPerson, onClear: clearPerson,
     noMatch: 'No gadget student with that name'
