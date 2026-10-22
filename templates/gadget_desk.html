@@ -250,7 +250,7 @@
 
   var data = PEOPLE.map(function (p) {
     p.sub = p.gadget;
-    if (p.blocked) p.tag = 'BLACKLISTED'; else if (p.out) p.tag = 'OUT';
+    if (p.blocked) p.tag = p.suspended ? 'SUSPENDED' : 'BLACKLISTED'; else if (p.out) p.tag = 'OUT';
     return p;
   });
   var picker = window.StudentPicker && StudentPicker.attach({
