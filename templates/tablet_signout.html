@@ -1,89 +1,103 @@
 {% extends 'base.html' %}
-{% block title %}Tablet Transactions - EIA System{% endblock %}
+{% block title %}Borrow a Tablet - EIA System{% endblock %}
 {% block content %}
 
 <div class="page-header">
-  <h1><i class="fas fa-list"></i> Tablet Transactions</h1>
-  <a href="{{ url_for('tablet_signout') }}" class="btn btn-primary"><i class="fas fa-plus"></i> New Sign-Out</a>
+  <div>
+    <h1><i class="fas fa-hand-holding"></i> Tablet Sign-Out</h1>
+    <p class="form-note">Pick a tablet, type a few letters of the student's name, choose the return time and sign it out.</p>
+  </div>
+  <div class="ld-clock" title="School time ({{ tz_name }})"><i class="far fa-clock"></i> <span id="soClock">—</span></div>
 </div>
 
-<!-- ACTIVE BORROWS -->
-<section class="section">
-  <h2 class="section-title"><i class="fas fa-hand-holding"></i> Currently Borrowed ({{ active|length }})</h2>
-  {% if active %}
-  <div class="card">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Tablet</th><th>Student</th><th>Class</th><th>Qty</th>
-          <th>Signed Out</th><th>Signed Out By</th><th>Expected Return</th><th>Status</th><th>Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for tx in active %}
-        {% set overdue = tx['expected_return_time'] and now > tx['expected_return_time'] %}
-        <tr class="{{ 'row-overdue' if overdue else '' }}">
-          <td><span class="badge badge-blue">{{ tx['tab_code'] }}</span></td>
-          <td>{{ tx['student_name'] }}</td>
-          <td>{{ tx['student_class'] }}</td>
-          <td>{{ tx['quantity'] }}</td>
-          <td>{{ tx['sign_out_time']|fmt_dt }}</td>
-          <td><i class="fas fa-user-shield"></i> {{ tx['signed_out_by'] or '—' }}</td>
-          <td>
-            {{ tx['expected_return_time']|fmt_dt_time }}
-            {% if overdue %}<span class="badge badge-red">OVERDUE</span>{% endif %}
-          </td>
-          <td><span class="badge badge-yellow">Borrowed</span></td>
-          <td>
-            <form method="POST" action="{{ url_for('tablet_return', tx_id=tx['id']) }}" onsubmit="return confirm('Mark as returned?')">
-              <button class="btn btn-sm btn-primary"><i class="fas fa-undo"></i> Return</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+<div class="card" style="max-width:640px;margin:0 auto;padding:1.5rem">
+  <div class="form-note" style="margin-bottom:1rem">
+    <i class="fas fa-user-shield"></i> Recorded as approved by <strong>{{ admin }}</strong>
   </div>
-  {% else %}
-  <div class="empty-state small">
-    <i class="fas fa-check-circle" style="color:var(--green)"></i>
-    <p>No tablets currently borrowed.</p>
-  </div>
-  {% endif %}
-</section>
 
-<!-- HISTORY -->
-<section class="section">
-  <h2 class="section-title"><i class="fas fa-history"></i> Return History (last 50)</h2>
-  {% if history %}
-  <div class="card">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Tablet</th><th>Student</th><th>Class</th>
-          <th>Signed Out</th><th>Signed Out By</th><th>Returned</th><th>Signed In By</th><th>Duration</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for tx in history %}
-        <tr>
-          <td><span class="badge badge-blue">{{ tx['tab_code'] }}</span></td>
-          <td>{{ tx['student_name'] }}</td>
-          <td>{{ tx['student_class'] }}</td>
-          <td>{{ tx['sign_out_time']|fmt_dt }}</td>
-          <td><i class="fas fa-user-shield"></i> {{ tx['signed_out_by'] or '—' }}</td>
-          <td>{{ tx['sign_back_time']|fmt_dt }}</td>
-          <td><i class="fas fa-user-check"></i> {{ tx['signed_back_by'] or '—' }}</td>
-          <td>{{ tx['duration_hours']|fmt_duration }}</td>
-        </tr>
+  {% if tablets %}
+  <form method="POST" action="{{ url_for('tablet_signout') }}" id="soForm" autocomplete="off">
+    <div class="form-group">
+      <label for="tablet_id">Tablet</label>
+      <select name="tablet_id" id="tablet_id" class="form-control" required>
+        <option value="">— Choose an available tablet —</option>
+        {% for t in tablets %}
+        <option value="{{ t['id'] }}" {{ 'selected' if form.get('tablet_id') == t['id']|string else '' }}>
+          {{ t['tablet_id'] }}{% if t['name'] %} — {{ t['name'] }}{% endif %}
+        </option>
         {% endfor %}
-      </tbody>
-    </table>
-  </div>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="student_name">Student name</label>
+      <input type="text" name="student_name" id="student_name" class="form-control"
+             placeholder="Type a few letters, e.g. muk gra" value="{{ form.get('student_name', '') }}" required/>
+    </div>
+
+    <div class="form-group">
+      <label for="student_class">Class</label>
+      <input type="text" name="student_class" id="student_class" class="form-control"
+             placeholder="Fills in from the school register" value="{{ form.get('student_class', '') }}" required/>
+    </div>
+
+    <div class="form-group">
+      <label for="quantity">Quantity</label>
+      <input type="number" name="quantity" id="quantity" class="form-control" min="1" max="5"
+             value="{{ form.get('quantity', 1) }}"/>
+    </div>
+
+    <div class="form-group">
+      <label for="return_time">Return time</label>
+      <input type="time" name="return_time" id="return_time" class="form-control"
+             value="{{ form.get('return_time', '') }}" required/>
+      <span class="form-note">Must be later than the current time today.</span>
+    </div>
+
+    <button class="btn btn-primary btn-lg btn-block" type="submit">
+      <i class="fas fa-hand-holding"></i> Sign Out Tablet
+    </button>
+  </form>
   {% else %}
   <div class="empty-state small">
-    <p>No return history yet.</p>
+    <i class="fas fa-tablet-alt"></i>
+    <p>No tablets are available right now — every active tablet is currently borrowed.</p>
+    <a href="{{ url_for('tablet_transactions') }}" class="btn btn-outline"><i class="fas fa-list"></i> See who has them</a>
   </div>
   {% endif %}
-</section>
+</div>
+
+<script src="{{ url_for('static', filename='js/student-picker.js') }}"></script>
+<script>
+(function () {
+  var students = {{ students|tojson }};
+
+  // Student search: choosing a name fills in the class from the register
+  var nameBox = document.getElementById('student_name');
+  var classBox = document.getElementById('student_class');
+  if (nameBox && window.StudentPicker) {
+    StudentPicker.attach({
+      input: nameBox,
+      data: students,
+      onSelect: function (item) { if (classBox) classBox.value = item.c || ''; }
+    });
+  }
+
+  // School clock, kept in step with the server so a wrong tablet clock can't skew it
+  var clock = document.getElementById('soClock');
+  var offset = {{ server_now_ms }} - Date.now();
+  var tz = {{ tz_name|tojson }};
+  function tick() {
+    if (!clock) return;
+    try {
+      clock.textContent = new Date(Date.now() + offset).toLocaleTimeString('en-GB',
+        { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    } catch (e) {
+      clock.textContent = new Date(Date.now() + offset).toLocaleTimeString();
+    }
+  }
+  tick();
+  setInterval(tick, 15000);
+})();
+</script>
 {% endblock %}
