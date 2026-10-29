@@ -1,0 +1,186 @@
+{% extends 'base.html' %}
+{% block title %}Teacher Sign-Out - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><i class="fas fa-chalkboard-teacher"></i> Teacher Sign-Out</h1>
+    <p class="form-note">Choose the teacher, tick every tablet they are taking (or type the code numbers), set the return time and sign them all out in one go.</p>
+  </div>
+  <div class="ts-clock" title="School time ({{ tz_name }})"><i class="far fa-clock"></i> <span id="tsClock">—</span></div>
+</div>
+
+<div class="card ts-card">
+  <div class="ts-approver">
+    <i class="fas fa-user-shield"></i> Recorded as approved by <strong>{{ admin }}</strong>
+  </div>
+
+  {% if not teachers %}
+  <div class="empty-state small">
+    <i class="fas fa-chalkboard-teacher"></i>
+    <p>There are no teachers in the register yet.</p>
+    <a href="{{ url_for('teachers_page') }}" class="btn btn-primary"><i class="fas fa-user-plus"></i> Add teachers</a>
+  </div>
+  {% elif not tablets %}
+  <div class="empty-state small">
+    <i class="fas fa-tablet-alt"></i>
+    <p>No tablets are available right now: every active tablet is signed out.</p>
+    <a href="{{ url_for('tablet_transactions') }}" class="btn btn-outline"><i class="fas fa-list"></i> See who has them</a>
+  </div>
+  {% else %}
+  <form method="POST" action="{{ url_for('teacher_signout') }}" id="tsForm" autocomplete="off">
+    <div class="form-group">
+      <label for="teacher_id">Teacher</label>
+      <select name="teacher_id" id="teacher_id" class="form-control" required>
+        <option value="">— Choose a teacher —</option>
+        {% for t in teachers %}
+        <option value="{{ t['id'] }}" {{ 'selected' if form.get('teacher_id') == t['id']|string else '' }}>{{ t['full_name'] }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="codes">Type code numbers (optional)</label>
+      <input type="text" name="codes" id="codes" class="form-control"
+             placeholder="e.g. 1045, 1050, 1060-1065 (the {{ prefix }}- prefix is added for you)"
+             value="{{ form.get('codes', '') }}"/>
+      <span class="form-note">Typing a code ticks it in the list below. Ranges like 1060-1065 work too.</span>
+    </div>
+
+    <div class="form-group">
+      <div class="ts-picker-head">
+        <label style="margin:0">Tablets available <span class="badge badge-blue">{{ tablets|length }}</span></label>
+        <div class="ts-tools">
+          <span class="ts-count"><strong id="tsCount">0</strong> selected</span>
+          <button type="button" class="btn btn-sm btn-outline" id="tsAll">Select all</button>
+          <button type="button" class="btn btn-sm btn-outline" id="tsNone">Clear</button>
+        </div>
+      </div>
+      <div class="ts-grid" id="tsGrid">
+        {% for t in tablets %}
+        <label class="ts-chip" title="{{ t['name'] }}">
+          <input type="checkbox" name="tablet_ids" value="{{ t['id'] }}"
+                 {% if t['num'] is not none %}data-num="{{ t['num'] }}"{% endif %}
+                 {{ 'checked' if t['id']|string in picked else '' }}/>
+          <span>{{ t['code'] }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <span class="form-note">At most {{ max_tablets }} tablets per sign-out. Tablets already out are not listed.</span>
+    </div>
+
+    <div class="form-group">
+      <label for="return_time">Return time</label>
+      <input type="time" name="return_time" id="return_time" class="form-control"
+             value="{{ form.get('return_time', '') }}" required/>
+      <span class="form-note">Must be later than the current time today. Every tablet in this sign-out is due at this time.</span>
+    </div>
+
+    <button class="btn btn-primary btn-lg btn-block" type="submit" id="tsBtn">
+      <i class="fas fa-hand-holding"></i> Sign Out Tablets
+    </button>
+
+    <ul class="ts-rules">
+      <li><i class="fas fa-check-circle"></i> No daily limit for teachers, and the student blacklist does not apply.</li>
+      <li><i class="fas fa-check-circle"></i> Every tablet code is recorded against the teacher. Late tablets show on the Overdue page and in the live banner.</li>
+      <li><i class="fas fa-check-circle"></i> Tablets can be signed back in one by one or all together under
+        <a href="{{ url_for('teacher_checkouts') }}">Teacher Checkouts</a>.</li>
+    </ul>
+  </form>
+  {% endif %}
+</div>
+
+<style>
+  .ts-card { max-width: 760px; margin: 0 auto; padding: 1.5rem; }
+  .ts-approver { font-size: .8rem; color: var(--ink-mid); background: var(--navy-ghost, #eef1f8);
+                 border-radius: 8px; padding: .5rem .7rem; margin-bottom: 1.1rem; }
+  .ts-clock { display: inline-flex; align-items: center; gap: .5rem; font-weight: 800; color: var(--navy);
+              background: var(--white); border: 1px solid var(--ink-rule); border-radius: 999px; padding: .5rem 1rem; }
+  .ts-picker-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem;
+                    flex-wrap: wrap; margin-bottom: .5rem; }
+  .ts-tools { display: flex; align-items: center; gap: .5rem; }
+  .ts-count { font-size: .85rem; color: var(--ink-mid); margin-right: .3rem; }
+  .ts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: .5rem;
+             max-height: 320px; overflow-y: auto; padding: .6rem; border: 1px solid var(--ink-rule);
+             border-radius: 12px; background: var(--white); }
+  .ts-chip { display: flex; align-items: center; gap: .45rem; padding: .45rem .6rem; border-radius: 8px;
+             border: 1px solid var(--ink-rule); cursor: pointer; font-size: .85rem; font-weight: 700;
+             color: var(--navy); background: var(--navy-ghost, #f4f7fc); user-select: none; }
+  .ts-chip:has(input:checked) { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .ts-chip input { margin: 0; }
+  .ts-rules { list-style: none; margin: 1.1rem 0 0; padding: .9rem 1rem; border-radius: 10px;
+              background: var(--navy-ghost, #f4f7fc); font-size: .8rem; color: var(--ink-light); display: grid; gap: .35rem; }
+  .ts-rules i { color: var(--green); margin-right: .4rem; }
+  .ts-rules a { color: var(--navy); font-weight: 700; text-decoration: underline; }
+</style>
+
+<script>
+(function () {
+  var grid = document.getElementById('tsGrid');
+  if (!grid) return;
+  var boxes = Array.prototype.slice.call(grid.querySelectorAll('input[type=checkbox]'));
+  var countEl = document.getElementById('tsCount');
+  var codesBox = document.getElementById('codes');
+
+  function count() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    countEl.textContent = n;
+    return n;
+  }
+  boxes.forEach(function (b) { b.addEventListener('change', count); });
+  document.getElementById('tsAll').addEventListener('click', function () {
+    boxes.forEach(function (b) { b.checked = true; }); count();
+  });
+  document.getElementById('tsNone').addEventListener('click', function () {
+    boxes.forEach(function (b) { b.checked = false; }); count();
+  });
+
+  // Typing code numbers ticks the matching tablets (1045, 1050, 1060-1065)
+  function tickTyped() {
+    var text = (codesBox.value || '').replace(/^\s*{{ prefix }}[\s_-]*/i, '').replace(/{{ prefix }}[\s_-]*/gi, '');
+    var wanted = {};
+    text.split(/[,;\s]+/).forEach(function (tok) {
+      var m = tok.match(/^(\d{1,6})\s*[-\u2013]\s*(\d{1,6})$/);
+      if (m) {
+        var lo = parseInt(m[1], 10), hi = parseInt(m[2], 10);
+        for (var n = lo; n <= hi && n - lo < 200; n++) wanted[n] = true;
+      } else if (/^\d{1,6}$/.test(tok)) { wanted[parseInt(tok, 10)] = true; }
+    });
+    boxes.forEach(function (b) {
+      var num = b.getAttribute('data-num');
+      if (num !== null && wanted[parseInt(num, 10)]) b.checked = true;
+    });
+    count();
+  }
+  if (codesBox) codesBox.addEventListener('change', tickTyped);
+
+  // Ask before issuing, and never send twice on a double click
+  var form = document.getElementById('tsForm'), btn = document.getElementById('tsBtn');
+  form.addEventListener('submit', function (e) {
+    if (form.dataset.sent) { e.preventDefault(); return; }
+    var n = count();
+    var typed = (codesBox.value || '').trim();
+    var sel = document.getElementById('teacher_id');
+    var who = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '';
+    var due = document.getElementById('return_time').value;
+    if (n > 0 && !typed && !window.confirm('Sign out ' + n + ' tablet' + (n === 1 ? '' : 's') +
+        ' to ' + who + ', due back at ' + due + '?')) { e.preventDefault(); return; }
+    form.dataset.sent = '1';
+    setTimeout(function () { btn.disabled = true; }, 0);
+  });
+
+  // School clock, kept in step with the server
+  var clock = document.getElementById('tsClock');
+  var offset = {{ server_now_ms }} - Date.now();
+  var tz = {{ tz_name|tojson }};
+  function tick() {
+    try {
+      clock.textContent = new Date(Date.now() + offset).toLocaleTimeString('en-GB',
+        { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    } catch (err) { clock.textContent = new Date(Date.now() + offset).toLocaleTimeString(); }
+  }
+  tick(); setInterval(tick, 15000);
+  count();
+})();
+</script>
+{% endblock %}

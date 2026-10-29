@@ -1,0 +1,141 @@
+{% extends 'base.html' %}
+{% block title %}Teacher Checkouts - EIA System{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><i class="fas fa-clipboard-list"></i> Teacher Checkouts</h1>
+    <p class="form-note">Every sign-out lists each tablet code. Tick the tablets that came back, or sign them all in at once.</p>
+  </div>
+  <div style="display:flex;gap:.6rem;flex-wrap:wrap">
+    <a href="{{ url_for('teacher_signout') }}" class="btn btn-primary"><i class="fas fa-hand-holding"></i> New Sign-Out</a>
+    <a href="{{ url_for('teachers_page') }}" class="btn btn-outline"><i class="fas fa-chalkboard-teacher"></i> Teachers</a>
+  </div>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card stat-blue">
+    <div class="stat-icon"><i class="fas fa-clipboard-list"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ open_groups|length }}</span><span class="stat-label">Open Sign-Outs</span></div>
+  </div>
+  <div class="stat-card stat-yellow">
+    <div class="stat-icon"><i class="fas fa-tablet-alt"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ tablets_out }}</span><span class="stat-label">Tablets With Teachers</span></div>
+  </div>
+  <div class="stat-card stat-red">
+    <div class="stat-icon"><i class="fas fa-bell"></i></div>
+    <div class="stat-info"><span class="stat-number">{{ overdue_tablets }}</span><span class="stat-label">Overdue Tablets</span></div>
+  </div>
+</div>
+
+<form method="GET" action="{{ url_for('teacher_checkouts') }}" class="tc-search">
+  <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Search a teacher or a tablet code, e.g. Osojo or 1045"/>
+  <button class="btn btn-primary" type="submit"><i class="fas fa-search"></i> Search</button>
+  {% if q %}<a class="btn btn-outline" href="{{ url_for('teacher_checkouts') }}">Clear</a>{% endif %}
+</form>
+
+<section class="section">
+  <h2 class="section-title">Out now</h2>
+  {% if open_groups %}
+  <div class="tc-list">
+    {% for g in open_groups %}
+    <div class="card tc-card {{ 'tc-overdue' if g['overdue'] else '' }}">
+      <div class="tc-head">
+        <div>
+          <h3><i class="fas fa-chalkboard-teacher"></i> {{ g['teacher'] }}</h3>
+          <p class="tc-meta">
+            Signed out {{ g['out']|fmt_dt }} &middot; approved by {{ g['by'] or '—' }} &middot;
+            due back <strong>{{ g['due']|fmt_dt_time }}</strong>
+          </p>
+        </div>
+        {% if g['overdue'] %}
+          <span class="badge badge-red"><i class="fas fa-bell"></i> Overdue by {{ g['late_text'] }}</span>
+        {% else %}
+          <span class="badge badge-yellow"><i class="fas fa-hourglass-half"></i> Due in {{ g['left_text'] }}</span>
+        {% endif %}
+      </div>
+
+      <form method="POST" action="{{ url_for('teacher_return') }}">
+        <input type="hidden" name="checkout" value="{{ g['checkout'] }}"/>
+        <input type="hidden" name="q" value="{{ q }}"/>
+        <div class="tc-codes">
+          {% for it in g['items'] %}
+          <label class="tc-chip">
+            <input type="checkbox" name="ids" value="{{ it['id'] }}"/>
+            <span>{{ it['code'] }}</span>
+          </label>
+          {% endfor %}
+        </div>
+        <div class="tc-actions">
+          <span class="tc-meta">{{ g['items']|length }} tablet{{ '' if g['items']|length == 1 else 's' }} still out</span>
+          <button type="submit" name="do" value="selected" class="btn btn-sm btn-outline">
+            <i class="fas fa-undo"></i> Sign in ticked
+          </button>
+          <button type="submit" name="do" value="all" class="btn btn-sm btn-primary"
+                  onclick="return confirm('Sign in all {{ g['items']|length }} tablets from {{ g['teacher']|e }}?');">
+            <i class="fas fa-check-double"></i> Sign in all
+          </button>
+        </div>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state small">
+    <i class="fas fa-check-circle" style="color:var(--green)"></i>
+    <p>{{ 'No open teacher sign-outs match that search.' if q else 'No tablets are out with teachers right now.' }}</p>
+  </div>
+  {% endif %}
+</section>
+
+<section class="section">
+  <h2 class="section-title">History</h2>
+  {% if history %}
+  <div class="card" style="overflow-x:auto">
+    <table class="data-table">
+      <thead>
+        <tr><th>Teacher</th><th>Tablets signed in</th><th>Signed out</th><th>Approved by</th><th>Was due</th><th>Signed in</th><th>Signed in by</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        {% for g in history %}
+        <tr>
+          <td><strong>{{ g['teacher'] }}</strong></td>
+          <td>
+            {% for it in g['items'] %}<span class="badge badge-blue" style="margin:0 .2rem .2rem 0">{{ it['code'] }}</span>{% endfor %}
+          </td>
+          <td>{{ g['out']|fmt_dt }}</td>
+          <td>{{ g['by'] or '—' }}</td>
+          <td>{{ g['due']|fmt_dt_time }}</td>
+          <td>{{ g['back']|fmt_dt }}</td>
+          <td>{{ g['back_by'] or '—' }}</td>
+          <td>{% if g['late'] %}<span class="badge badge-red">Late</span>{% else %}<span class="badge badge-green">On time</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state small"><i class="fas fa-history"></i><p>{{ 'Nothing in the history matches that search.' if q else 'No teacher sign-outs have been returned yet.' }}</p></div>
+  {% endif %}
+</section>
+
+<style>
+  .tc-search { display: flex; gap: .5rem; flex-wrap: wrap; margin: 0 0 1.2rem; }
+  .tc-search .form-control { flex: 1 1 260px; max-width: 420px; }
+  .tc-list { display: grid; gap: 1rem; }
+  .tc-card { padding: 1.1rem 1.2rem; }
+  .tc-overdue { border-left: 4px solid var(--danger); background: rgba(214,48,65,.04); }
+  .tc-head { display: flex; justify-content: space-between; gap: .8rem; flex-wrap: wrap; align-items: flex-start; margin-bottom: .8rem; }
+  .tc-head h3 { margin: 0; color: var(--navy); font-size: 1.05rem; }
+  .tc-head h3 i { margin-right: .4rem; }
+  .tc-meta { margin: .25rem 0 0; font-size: .8rem; color: var(--ink-light); }
+  .tc-codes { display: flex; flex-wrap: wrap; gap: .45rem; margin-bottom: .9rem; }
+  .tc-chip { display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .6rem; border-radius: 8px;
+             border: 1px solid var(--ink-rule); cursor: pointer; font-size: .82rem; font-weight: 700;
+             color: var(--navy); background: var(--navy-ghost, #f4f7fc); user-select: none; }
+  .tc-chip:has(input:checked) { background: var(--green); border-color: var(--green); color: #fff; }
+  .tc-chip input { margin: 0; }
+  .tc-actions { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .tc-actions .tc-meta { margin: 0 auto 0 0; }
+</style>
+{% endblock %}
