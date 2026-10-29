@@ -318,6 +318,17 @@ CREATE TABLE IF NOT EXISTS suspensions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_suspensions_status ON suspensions(status, ends_at);
+
+CREATE TABLE IF NOT EXISTS teachers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    full_name TEXT NOT NULL,
+    phone TEXT DEFAULT '',
+    is_active INTEGER DEFAULT 1,
+    created_by TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_teachers_unique ON teachers(full_name COLLATE NOCASE);
 """
 
 
@@ -328,6 +339,16 @@ MIGRATIONS = [
     ("tablet_transactions", "signed_back_by", "TEXT"),
     ("laptop_students", "gadget_type", "TEXT DEFAULT 'Laptop'"),   # Laptop | Tablet (older rows = Laptop)
     ("laptop_slots", "label", "TEXT DEFAULT ''"),     # e.g. "Prep", "Lessons"
+    # teacher sign-out: a teacher's tablets live in tablet_transactions too, one row per
+    # tablet; all tablets of one sign-out share the same checkout_id
+    ("tablet_transactions", "teacher_id", "INTEGER"),
+    ("tablet_transactions", "checkout_id", "TEXT"),
+]
+
+# Indexes on migrated columns: these can only be created AFTER the columns exist.
+POST_MIGRATION_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_tablet_tx_teacher ON tablet_transactions(teacher_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_tablet_tx_checkout ON tablet_transactions(checkout_id)",
 ]
 
 
@@ -342,3 +363,5 @@ def init_db():
                         conn.execute(f"PRAGMA table_info({table})").fetchall()]
             if column not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        for stmt in POST_MIGRATION_INDEXES:
+            conn.execute(stmt)
